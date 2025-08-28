@@ -320,7 +320,8 @@ const OPENAPI_JSON = () => JSON.stringify({
           { in: "query", name: "friction_max", description: "Max minutes for GREEN tier when split_mode=traffic", schema: { type: "integer", example: 7 } },
           { in: "query", name: "allowed_traffic_mode", schema: { type: "string", enum: ["all","any"], default: "all" } },
           { in: "query", name: "split", schema: { type: "boolean", example: true } },
-          { in: "query", name: "split_mode", schema: { type: "string", enum: ["traffic","payout"], default: "traffic" } }
+          { in: "query", name: "split_mode", schema: { type: "string", enum: ["traffic","payout"], default: "traffic" } },
+          { in: "query", name: "whale_threshold", description: "Minimum payout for whales split", schema: { type: "number", default: 10 } }
         ],
         responses: {
           "200": {
@@ -527,6 +528,9 @@ const OPENAPI_YAML = () => [
   "        - in: query",
   "          name: split_mode",
   "          schema: { type: string, enum: [traffic, payout], default: traffic }",
+  "        - in: query",
+  "          name: whale_threshold",
+  "          schema: { type: number, default: 10 }",
   "      responses:",
   "        \"200\":",
   "          description: OK",
@@ -752,17 +756,19 @@ if (frictionParam != null) {
   frictionMax = split ? 7 : 6;
 }
 const payoutMin = Number(url.searchParams.get("min_payout") ?? url.searchParams.get("payout_min") ?? 0);
+let whaleThreshold = Number(url.searchParams.get("whale_threshold") ?? 10);
+if (!Number.isFinite(whaleThreshold) || whaleThreshold <= 0) whaleThreshold = 10;
 const allowedMode = (url.searchParams.get("allowed_traffic_mode") ?? "all") as "all" | "any";
 const channel = url.searchParams.get("channel")?.trim();
 const reqAllowed = csv(url.searchParams.get("allowed_traffic"));
 if (channel) reqAllowed.push(channel.toLowerCase());
 
 // Score for ranking and payout split
-const scored = offers.map(o => ({ ...o, _score: scoreOffer(o, { allowed: reqAllowed, whaleThreshold: 10 }) }));
+const scored = offers.map(o => ({ ...o, _score: scoreOffer(o, { allowed: reqAllowed, whaleThreshold }) }));
 if (split) {
   const networks = csv(url.searchParams.get("network"));
   if (splitMode === "payout") {
-    const whale_threshold = 10;
+    const whale_threshold = whaleThreshold;
     const whales = scored.filter(o => (o.payout ?? 0) >= whale_threshold)
                          .sort((a,b) => (b._score ?? 0) - (a._score ?? 0));
     const minnows = scored.filter(o => (o.payout ?? 0) < whale_threshold)

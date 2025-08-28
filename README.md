@@ -42,7 +42,8 @@ Cloudflare Worker that searches curated CPA/CPI offers and serves an OpenAPI spe
   - Traffic (GREEN/YELLOW; GREEN<=7 by default):
     - `curl -sS -G -H "X-Api-Key: $AIQB_KEY" "$BASE/offers/search" --data-urlencode 'split=true' --data-urlencode 'split_mode=traffic' | jq '{counts, sample_green: (.green[0]//null), sample_yellow: (.yellow[0]//null)}'`
   - Payout (WHALES/MINNOWS; threshold $10):
-    - `curl -sS -G -H "X-Api-Key: $AIQB_KEY" "$BASE/offers/search" --data-urlencode 'split=true' --data-urlencode 'split_mode=payout' | jq '{counts, whales0: (.whales[0]//null), minnows0: (.minnows[0]//null)}'`
+    - `curl -sS -G -H \"X-Api-Key: $AIQB_KEY\" \"$BASE/offers/search\" --data-urlencode 'split=true' --data-urlencode 'split_mode=payout' | jq '{counts, whales0: (.whales[0]//null), minnows0: (.minnows[0]//null)}'`
+    - Adjust threshold, e.g. whales at $5: add `--data-urlencode 'whale_threshold=5'`
 
 ### Parameters and Tips
 
