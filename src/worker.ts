@@ -964,6 +964,8 @@ const VAULT_HTML = (body: string) => `<!doctype html>
   th{background:#f5f5f5;text-align:left}
   .wrap{max-width:1100px;margin:0 auto}
   .muted{color:#666}
+  .hint{font-size:12px;color:#666;margin-left:8px}
+  .btn{padding:6px 10px;margin:8px 0;cursor:pointer}
 </style>
 <div class="wrap">
 <h1>Offer Vault</h1>
@@ -992,14 +994,61 @@ const VAULT_HTML = (body: string) => `<!doctype html>
     <label><input type="checkbox" name="split" value="true" checked /> Split (GREEN/YELLOW)</label>
     <label>Friction max</label>
     <input name="friction_max" type="number" min="1" max="30" value="7" />
-  </div>
-  <div>
+ </div>
+ <div>
     <button type="submit">Search</button>
     <span class="muted">Public view — no API key required</span>
   </div>
  </form>
  ${body}
 </div>
+<script>
+// Enhance tables: click-to-sort and simple \"Show all\" for long lists
+function setupTable(table){
+  if(!table || !table.tHead) return;
+  const ths = table.tHead.rows[0].cells;
+  for(let i=0;i<ths.length;i++){
+    ths[i].style.cursor='pointer';
+    ths[i].title='Click to sort';
+    ths[i].addEventListener('click',()=>sortTable(table,i,ths[i].dataset.type||'text'));
+  }
+  const limit = Number(table.dataset.limit || 0);
+  if(limit>0 && table.tBodies[0]){
+    const rows = Array.from(table.tBodies[0].rows);
+    if(rows.length>limit){
+      for(let i=limit;i<rows.length;i++) rows[i].style.display='none';
+      const btn = table.nextElementSibling;
+      if(btn && btn.classList.contains('show-more')){
+        btn.style.display='inline-block';
+        btn.addEventListener('click',()=>{
+          rows.forEach(r=>r.style.display='');
+          btn.remove();
+        });
+      }
+    }
+  }
+}
+function sortTable(table,col,type){
+  const asc = !(table.dataset.sortCol==String(col) && table.dataset.sortDir==='asc');
+  const tbody = table.tBodies[0];
+  const rows = Array.from(tbody.rows);
+  rows.sort((a,b)=>{
+    let va = a.cells[col].textContent.trim();
+    let vb = b.cells[col].textContent.trim();
+    if(type==='num'){
+      const na = parseFloat(va)||0, nb = parseFloat(vb)||0;
+      return asc ? na-nb : nb-na;
+    }
+    return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+  });
+  rows.forEach(r=>tbody.appendChild(r));
+  table.dataset.sortCol=String(col);
+  table.dataset.sortDir=asc?'asc':'desc';
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  document.querySelectorAll('table.sortable').forEach(t=>setupTable(t));
+});
+</script>
 </html>`;
 
 function serveVault(origin?: string) {
@@ -1025,20 +1074,29 @@ async function vaultSearch(req: Request, origin?: string) {
     const result = splitOffers(scored, reqAllowed, { frictionMax, payoutMin: Number(url.searchParams.get("min_payout") ?? 0), allowedMode });
     const renderRows = (arr: Offer[]) => arr.map(o => `<tr><td>${o.name}</td><td>${o.network}</td><td>${o.payout ?? ''}</td><td>${(o._score ?? 0).toFixed(3)}</td><td>${(o.geo||[]).join(',')}</td><td>${(o.device||[]).join(',')}</td><td>${o.friction_minutes ?? ''}</td></tr>`).join("");
     body = `
-      <h2>GREEN (${result.green.length})</h2>
-      <table><thead><tr><th>Name</th><th>Net</th><th>Payout</th><th>Score</th><th>Geo</th><th>Device</th><th>Friction</th></tr></thead>
+      <h2>GREEN (${result.green.length}) <span class="hint">click headers to sort</span></h2>
+      <table id="greenTable" class="sortable" data-limit="20"><thead><tr>
+        <th data-type="text">Name</th><th data-type="text">Net</th><th data-type="num">Payout</th><th data-type="num">Score</th><th data-type="text">Geo</th><th data-type="text">Device</th><th data-type="num">Friction</th>
+      </tr></thead>
       <tbody>${renderRows(result.green)}</tbody></table>
-      <h2>YELLOW (${result.yellow.length})</h2>
-      <table><thead><tr><th>Name</th><th>Net</th><th>Payout</th><th>Score</th><th>Geo</th><th>Device</th><th>Friction</th></tr></thead>
+      <button class="btn show-more" data-target="greenTable" style="display:none">Show all</button>
+      <h2>YELLOW (${result.yellow.length}) <span class="hint">click headers to sort</span></h2>
+      <table id="yellowTable" class="sortable" data-limit="20"><thead><tr>
+        <th data-type="text">Name</th><th data-type="text">Net</th><th data-type="num">Payout</th><th data-type="num">Score</th><th data-type="text">Geo</th><th data-type="text">Device</th><th data-type="num">Friction</th>
+      </tr></thead>
       <tbody>${renderRows(result.yellow)}</tbody></table>
+      <button class="btn show-more" data-target="yellowTable" style="display:none">Show all</button>
       <p class="muted">Total: ${result.counts.total} • Rules: friction_max=${result.rules.friction_max}, payout_min=${result.rules.payout_min}, allowed_traffic_mode=${result.rules.allowed_traffic_mode}</p>
     `;
   } else {
     const rows = scored.map(o => `<tr><td>${o.name}</td><td>${o.network}</td><td>${o.payout ?? ''}</td><td>${(o._score ?? 0).toFixed(3)}</td><td>${(o.geo||[]).join(',')}</td><td>${(o.device||[]).join(',')}</td><td>${o.friction_minutes ?? ''}</td></tr>`).join("");
     body = `
-      <h2>Offers (${scored.length})</h2>
-      <table><thead><tr><th>Name</th><th>Net</th><th>Payout</th><th>Score</th><th>Geo</th><th>Device</th><th>Friction</th></tr></thead>
+      <h2>Offers (${scored.length}) <span class=\"hint\">click headers to sort</span></h2>
+      <table id="flatTable" class="sortable" data-limit="20"><thead><tr>
+        <th data-type="text">Name</th><th data-type="text">Net</th><th data-type="num">Payout</th><th data-type="num">Score</th><th data-type="text">Geo</th><th data-type="text">Device</th><th data-type="num">Friction</th>
+      </tr></thead>
       <tbody>${rows}</tbody></table>
+      <button class="btn show-more" data-target="flatTable" style="display:none">Show all</button>
     `;
   }
   return new Response(VAULT_HTML(body), { headers: { "Content-Type": "text/html; charset=utf-8", ...okCORS(origin) } });
