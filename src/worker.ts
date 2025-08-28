@@ -765,6 +765,7 @@ if (channel) reqAllowed.push(channel.toLowerCase());
 
 // Score for ranking and payout split
 const scored = offers.map(o => ({ ...o, _score: scoreOffer(o, { allowed: reqAllowed, whaleThreshold }) }));
+const applyWhaleFilter = url.searchParams.has("whale_threshold") && whaleThreshold > 0;
 if (split) {
   const networks = csv(url.searchParams.get("network"));
   if (splitMode === "payout") {
@@ -797,7 +798,9 @@ if (split) {
           }), { headers: { "Content-Type": "application/json", ...okCORS(originHdr) } });
         }
 
-        const result = splitOffers(scored, reqAllowed, { frictionMax, payoutMin, allowedMode });
+        const baseList = applyWhaleFilter ? scored.filter(o => (o.payout ?? 0) >= whaleThreshold) : scored;
+        const result = splitOffers(baseList, reqAllowed, { frictionMax, payoutMin, allowedMode });
+        const resultWithRule = { ...result, rules: { ...result.rules, whale_threshold: applyWhaleFilter ? whaleThreshold : undefined } };
 
         return new Response(JSON.stringify({ meta: {
             geo: url.searchParams.get("geo") ?? "US",
@@ -812,12 +815,13 @@ if (split) {
             channel,
             allowed_traffic_mode: allowedMode
           },
-          ...result }), {
+          ...resultWithRule }), {
           headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
         });
       }
 
-      return new Response(JSON.stringify({ offers: scored }), {
+      const flatList = applyWhaleFilter ? scored.filter(o => (o.payout ?? 0) >= whaleThreshold) : scored;
+      return new Response(JSON.stringify({ offers: flatList }), {
           headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
         });
       }
