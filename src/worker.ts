@@ -687,8 +687,41 @@ export default {
       }
       if (req.method === "GET") {
         const accept = req.headers.get("accept") || "";
-        if (accept.includes("application/json")) {
-          return new Response(JSON.stringify({ status: "ok" }), {
+        const url = new URL(req.url);
+        const wantDetail = (url.searchParams.get("detail") || "").toLowerCase() 
+          .match(/^(1|true|yes|on)$/) != null;
+        if (accept.includes("application/json") || wantDetail) {
+          // Build a quick view of merged offers and settings
+          const registryOffers: RegOffer[] = Array.isArray((REGISTRY as any)?.offers) ? (REGISTRY as any).offers : [];
+          const mergedMap = new Map<string, Offer>();
+          for (const src of [...registryOffers, ...FALLBACK_OFFERS]) {
+            const key = (src.url || "") as string;
+            if (!key) continue;
+            if (!mergedMap.has(key)) mergedMap.set(key, src as Offer);
+          }
+          const merged = Array.from(mergedMap.values());
+          const networks = Array.from(new Set(merged.map(o => (o.network || "").toLowerCase()).filter(Boolean)));
+          const geos = Array.from(new Set(merged.flatMap(o => (o.geo || []).map(g => g.toUpperCase()))));
+          const devices = Array.from(new Set(merged.flatMap(o => (o.device || []).map(d => d.toLowerCase()))));
+
+          const payload = {
+            status: "ok",
+            time: new Date().toISOString(),
+            info: { service: "aiqbrain-offer-engine", version: JSON.parse(OPENAPI_JSON()).info?.version || "" },
+            config: {
+              api_keys_configured: (env.AIQ_API_KEYS || "").split(",").map(s=>s.trim()).filter(Boolean).length,
+              base_url: env.BASE_URL || undefined,
+              networks_enabled: env.NETWORKS_ENABLED || undefined,
+              green_max_minutes: env.GREEN_MAX_MINUTES || undefined
+            },
+            counts: {
+              registry: registryOffers.length,
+              fallbacks: FALLBACK_OFFERS.length,
+              merged: merged.length
+            },
+            coverage: { networks, geos, devices }
+          };
+          return new Response(JSON.stringify(payload), {
             headers: { "Content-Type": "application/json; charset=utf-8", ...okCORS(originHdr) }
           });
         }
