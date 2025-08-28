@@ -1,20 +1,15 @@
 name = "aiqbrain-offer-engine"
 main = "src/worker.ts"
+workers_dev = true
 
 compatibility_date = "2025-08-01"
 
 compatibility_flags = ["nodejs_compat"]
 
-[build]
-tsconfig = "tsconfig.json"
+## Note: Wrangler auto-detects tsconfig.json; explicit [build].tsconfig not needed
 
 [observability]
 enabled = true
-
-
-# Also deploy to the workers.dev subdomain for testing and third‑party integrations
-
-workers_dev = true
 
 [assets]
 directory = "public"

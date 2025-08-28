@@ -772,6 +772,26 @@ export default {
     }
 
     try {
+      // Legacy short redirect routes for live traffic
+      if (req.method === "GET" && (pathname === "/sv" || pathname === "/sweeps" || pathname === "/win500")) {
+        const ua = req.headers.get("user-agent") || "";
+        const url = new URL(req.url);
+        const src = url.searchParams.get("src") || url.searchParams.get("utm_source") || "direct";
+        const campaign = url.searchParams.get("utm_campaign") || "";
+        const tracking = [src, campaign].filter(Boolean).join(":");
+        // minimal device sniffing
+        const isAndroid = /Android/i.test(ua);
+        const isiOS = /iPhone|iPad|iPod/i.test(ua);
+        if (isAndroid) {
+          return Response.redirect("https://singingfiles.com/show.php?l=0&u=2427730&id=68831&tracking_id=" + encodeURIComponent(tracking), 302);
+        }
+        if (isiOS) {
+          return Response.redirect("https://singingfiles.com/show.php?l=0&u=2427730&id=69234&tracking_id=" + encodeURIComponent(tracking), 302);
+        }
+        // desktop or unknown => generic fallback
+        return Response.redirect(env.FALLBACK_GENERIC || "https://aiqengage.com/access", 302);
+      }
+
       if (req.method === "GET" && pathname === "/offers/search") {
         const url = new URL(req.url);
         // TODO: If you later fetch real upstreams, wrap with safeJson(...)
