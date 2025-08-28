@@ -113,23 +113,41 @@ function logNorm(x: number, max = 200): number {
   return Math.log1p(v) / Math.log1p(max);
 }
 
-function scoreOffer(o: Offer, opts: { allowed: string[]; whaleThreshold?: number }): number {
-  const payout = logNorm(o.payout ?? 0, 200);
-  const epc = logNorm(o.epc ?? 0, 10);
-  const tier1 = new Set(["us","ca","uk","au","de","fr"]);
-  const geo_match = (o.geo || []).some(g => tier1.has(String(g).toLowerCase())) ? 1 : 0.5;
-  const friction = o.friction_minutes ?? 999;
-  const friction_bonus = friction <= 7 ? 1 : (friction <= 15 ? 0.5 : 0);
-  const traffic_match = opts.allowed.length === 0
-    ? 1
-    : (o.allowed_traffic || []).map(t => String(t).toLowerCase()).some(t => opts.allowed.includes(t)) ? 1 : 0;
+// Scoring helpers (Offer Vault + Broader Feed)
+const TIER1_EN = new Set(["US","CA","UK","AU"]);
+const TIER1_EU = new Set(["DE","FR","IE","NZ"]);
 
-  const isWhale = (o.payout ?? 0) >= (opts.whaleThreshold ?? 10);
-  const W = isWhale
-    ? { w1:0.5, w2:0.2, w3:0.2, w4:0.05, w5:0.05 }
-    : { w1:0.2, w2:0.4, w3:0.2, w4:0.1,  w5:0.1  };
-
-  return (W.w1*payout) + (W.w2*epc) + (W.w3*traffic_match) + (W.w4*geo_match) + (W.w5*friction_bonus);
+function normPayout(x?: number) { return Math.log1p(Math.max(0, x ?? 0)); }
+function frictionBonus(mins?: number) {
+  const m = mins ?? 999;
+  if (m <= 7) return 1;
+  if (m <= 15) return 0.5;
+  return 0;
+}
+function geoMatch(geoList: string[] = []) {
+  const up = geoList.map(g => g.toUpperCase());
+  if (up.some(g => TIER1_EN.has(g))) return 1;
+  if (up.some(g => TIER1_EU.has(g))) return 0.5;
+  return 0;
+}
+function trafficMatch(allowed: string[] = [], requested: string[] = [], mode: "all"|"any" = "all") {
+  const A = new Set(allowed.map(s => s.toLowerCase()));
+  const R = requested.map(s => s.toLowerCase());
+  if (!R.length) return 1; // neutral if nothing requested
+  if (mode === "all") return R.every(r => A.has(r)) ? 1 : 0;
+  return R.some(r => A.has(r)) ? 1 : 0;
+}
+function scoreOffer(o: Offer, opts: { allowed: string[]; whaleThreshold?: number; allowedMode?: "all"|"any" }): number {
+  const payout = normPayout(o.payout);
+  const epc = Math.max(0, o.epc ?? 0); // use raw EPC scale
+  const t = trafficMatch(o.allowed_traffic, opts.allowed, opts.allowedMode ?? "all");
+  const g = geoMatch(o.geo);
+  const fb = frictionBonus(o.friction_minutes);
+  const whale = (o.payout ?? 0) >= (opts.whaleThreshold ?? 10);
+  const W = whale
+    ? { p:0.5, e:0.2, t:0.2, g:0.05, f:0.05 }
+    : { p:0.2, e:0.4, t:0.2, g:0.10, f:0.10 };
+  return (W.p*payout) + (W.e*epc) + (W.t*t) + (W.g*g) + (W.f*fb);
 }
 
 function splitOffers(
@@ -152,10 +170,14 @@ function splitOffers(
     const frictionOK = (o.friction_minutes ?? 999) <= opts.frictionMax;
     const payoutOK = (o.payout ?? 0) >= opts.payoutMin;
 
+    const withScore: Offer = { ...o, _score: scoreOffer(o, { allowed: RA, allowedMode: opts.allowedMode }) };
     const isGreen = trafficOK && frictionOK && payoutOK;
-    const withTier: Offer = { ...o, tier: isGreen ? "green" : "yellow" };
+    const withTier: Offer = { ...withScore, tier: isGreen ? "green" : "yellow" };
     (isGreen ? green : yellow).push(withTier);
   }
+
+  green.sort((a,b) => (b._score ?? 0) - (a._score ?? 0));
+  yellow.sort((a,b) => (b._score ?? 0) - (a._score ?? 0));
 
   return {
     green,
@@ -772,6 +794,14 @@ export default {
     }
 
     try {
+      // ---------- Public Vault (no API key required) ----------
+      if (req.method === "GET" && pathname === "/vault") {
+        return serveVault(originHdr);
+      }
+      if (req.method === "GET" && pathname === "/vault/search") {
+        return vaultSearch(req, originHdr);
+      }
+
       // Legacy short redirect routes for live traffic
       if (req.method === "GET" && (pathname === "/sv" || pathname === "/sweeps" || pathname === "/win500")) {
         const ua = req.headers.get("user-agent") || "";
@@ -873,7 +903,9 @@ if (split) {
         });
       }
 
-      const flatList = applyWhaleFilter ? scored.filter(o => (o.payout ?? 0) >= whaleThreshold) : scored;
+      const flatList = (applyWhaleFilter ? scored.filter(o => (o.payout ?? 0) >= whaleThreshold) : scored)
+        .map(o => ({ ...o }))
+        .sort((a,b) => (b._score ?? 0) - (a._score ?? 0));
       return new Response(JSON.stringify({ offers: flatList }), {
           headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
         });
@@ -918,3 +950,96 @@ if (split) {
     }
   }
 } as ExportedHandlerShim<Env>;
+
+// ===== Vault UI implementation =====
+const VAULT_HTML = (body: string) => `<!doctype html>
+<html lang="en"><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Offer Vault</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px}
+  input,select{padding:6px 8px;margin:4px}
+  table{border-collapse:collapse;width:100%;margin-top:16px}
+  th,td{border:1px solid #ddd;padding:8px;font-size:14px}
+  th{background:#f5f5f5;text-align:left}
+  .wrap{max-width:1100px;margin:0 auto}
+  .muted{color:#666}
+</style>
+<div class="wrap">
+<h1>Offer Vault</h1>
+<form action="/vault/search" method="get">
+  <div>
+    <label>Geo (CSV)</label>
+    <input name="geo" placeholder="US,CA,UK,AU,DE,FR" />
+    <label>Device (CSV)</label>
+    <input name="device" placeholder="mobile,desktop" />
+    <label>Type (CSV or *)</label>
+    <input name="ctype" placeholder="CPA,CPI,SOI,DOI,Trial,Deposit" />
+  </div>
+  <div>
+    <label>Networks</label>
+    <input name="network" placeholder="ogads,cpagrip" />
+    <label>Allowed Traffic</label>
+    <input name="allowed_traffic" placeholder="Reddit,TikTok,Pinterest" />
+    <label>Channel</label>
+    <input name="channel" placeholder="TikTok" />
+  </div>
+  <div>
+    <label>Min Payout</label>
+    <input name="min_payout" type="number" step="0.1" min="0" value="0" />
+    <label>Max</label>
+    <input name="max" type="number" min="1" max="50" value="20" />
+    <label><input type="checkbox" name="split" value="true" checked /> Split (GREEN/YELLOW)</label>
+    <label>Friction max</label>
+    <input name="friction_max" type="number" min="1" max="30" value="7" />
+  </div>
+  <div>
+    <button type="submit">Search</button>
+    <span class="muted">Public view — no API key required</span>
+  </div>
+ </form>
+ ${body}
+</div>
+</html>`;
+
+function serveVault(origin?: string) {
+  const body = `<p class="muted">Enter filters and submit to view offers. Use split to see GREEN (faster, matched traffic) vs YELLOW.</p>`;
+  return new Response(VAULT_HTML(body), { headers: { "Content-Type": "text/html; charset=utf-8", ...okCORS(origin) } });
+}
+
+async function vaultSearch(req: Request, origin?: string) {
+  const url = new URL(req.url);
+  const offers = await handleSearch(url);
+  const channel = url.searchParams.get("channel")?.trim();
+  const reqAllowed = csv(url.searchParams.get("allowed_traffic"));
+  if (channel) reqAllowed.push(channel.toLowerCase());
+  const allowedMode = (url.searchParams.get("allowed_traffic_mode") ?? "all") as "all"|"any";
+  const scored = offers.map(o => ({ ...o, _score: scoreOffer(o, { allowed: reqAllowed, allowedMode }) }))
+                      .sort((a,b) => (b._score ?? 0) - (a._score ?? 0));
+
+  const split = url.searchParams.get("split") === "true";
+  const frictionMax = Number(url.searchParams.get("friction_max") ?? 7);
+
+  let body = "";
+  if (split) {
+    const result = splitOffers(scored, reqAllowed, { frictionMax, payoutMin: Number(url.searchParams.get("min_payout") ?? 0), allowedMode });
+    const renderRows = (arr: Offer[]) => arr.map(o => `<tr><td>${o.name}</td><td>${o.network}</td><td>${o.payout ?? ''}</td><td>${(o._score ?? 0).toFixed(3)}</td><td>${(o.geo||[]).join(',')}</td><td>${(o.device||[]).join(',')}</td><td>${o.friction_minutes ?? ''}</td></tr>`).join("");
+    body = `
+      <h2>GREEN (${result.green.length})</h2>
+      <table><thead><tr><th>Name</th><th>Net</th><th>Payout</th><th>Score</th><th>Geo</th><th>Device</th><th>Friction</th></tr></thead>
+      <tbody>${renderRows(result.green)}</tbody></table>
+      <h2>YELLOW (${result.yellow.length})</h2>
+      <table><thead><tr><th>Name</th><th>Net</th><th>Payout</th><th>Score</th><th>Geo</th><th>Device</th><th>Friction</th></tr></thead>
+      <tbody>${renderRows(result.yellow)}</tbody></table>
+      <p class="muted">Total: ${result.counts.total} • Rules: friction_max=${result.rules.friction_max}, payout_min=${result.rules.payout_min}, allowed_traffic_mode=${result.rules.allowed_traffic_mode}</p>
+    `;
+  } else {
+    const rows = scored.map(o => `<tr><td>${o.name}</td><td>${o.network}</td><td>${o.payout ?? ''}</td><td>${(o._score ?? 0).toFixed(3)}</td><td>${(o.geo||[]).join(',')}</td><td>${(o.device||[]).join(',')}</td><td>${o.friction_minutes ?? ''}</td></tr>`).join("");
+    body = `
+      <h2>Offers (${scored.length})</h2>
+      <table><thead><tr><th>Name</th><th>Net</th><th>Payout</th><th>Score</th><th>Geo</th><th>Device</th><th>Friction</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    `;
+  }
+  return new Response(VAULT_HTML(body), { headers: { "Content-Type": "text/html; charset=utf-8", ...okCORS(origin) } });
+}

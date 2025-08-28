@@ -6,6 +6,7 @@ Cloudflare Worker that searches curated CPA/CPI offers and serves an OpenAPI spe
 - OpenAPI endpoints: `/openapi.json`, `/openapi.yaml`
 - Health: `/offers/health`
 - Search: `/offers/search` (requires `X-Api-Key`)
+- Public Vault: `/vault` (HTML), `/vault/search` (HTML; supports split=true)
 - Curated registry: `registry.json` (merged over built-in fallbacks)
 
 ### Quick Start (local)
@@ -25,6 +26,9 @@ Cloudflare Worker that searches curated CPA/CPI offers and serves an OpenAPI spe
      - `curl -sS -G -H "X-Api-Key: aiq_dev_test_key_001" http://127.0.0.1:8787/offers/search --data-urlencode 'geo=US' --data-urlencode 'device=mobile' --data-urlencode 'ctype=*' --data-urlencode 'split=true' | jq '{counts, sample_green: (.green[0]//null), sample_yellow: (.yellow[0]//null)}'`
    - OpenAPI version:
      - `curl -sS http://127.0.0.1:8787/openapi.json | jq .openapi`
+   - Vault (public):
+     - Open: http://127.0.0.1:8787/vault
+     - Split view: http://127.0.0.1:8787/vault/search?split=true&friction_max=7&max=10
 
 ### Broader Search & Splits
 

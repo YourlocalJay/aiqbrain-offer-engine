@@ -42,4 +42,11 @@ else
   curl -sS "$BASE/openapi.json" | sed -n '1,80p'
 fi
 
+echo; echo "==> 5) Vault (public split)"
+if have_jq; then
+  curl -sS "$BASE/vault/search?split=true&friction_max=7&min_payout=0&max=10" | jq '.counts // {total: (.offers|length)}'
+else
+  curl -sS "$BASE/vault/search?split=true&friction_max=7&min_payout=0&max=10"
+fi
+
 echo; echo "Done."
