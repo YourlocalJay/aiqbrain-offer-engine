@@ -14,11 +14,11 @@ enabled = true
 
 # Also deploy to the workers.dev subdomain for testing and third‑party integrations
 
+workers_dev = true
+
 [assets]
 directory = "public"
 binding = "ASSETS"
-
-workers_dev = true
 
 # Run on colo(s) closest to where the data is used to reduce cold starts and latency
 [placement]
