@@ -81,3 +81,4 @@ Cloudflare Worker that searches curated CPA/CPI offers and serves an OpenAPI spe
 - The AI plugin manifest is served from the Worker at `/.well-known/ai-plugin.json` (auth: user_http bearer). The static copy in `public/.well-known` has been removed to keep one source of truth.
 - `wrangler.toml` uses a single `workers_dev = true` and includes asset binding for `public/`.
 - Keep secrets in Wrangler (`wrangler secret put ...`); dev defaults are non-sensitive.
+ - For GPT Actions and API consumer details, see `INTEGRATION.md`.
