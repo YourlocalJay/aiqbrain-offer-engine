@@ -12,6 +12,11 @@ pnpm-debug.log*
 .env
 .env.*
 
+# Local artifacts/data
+worker.js
+green_tiktok.csv
+*.zip
+
 # Builds / caches / coverage
 dist/
 build/
