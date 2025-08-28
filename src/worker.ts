@@ -94,6 +94,44 @@ function normalize(list?: string[]) {
   return (list ?? []).map(s => s.trim().toLowerCase());
 }
 
+function csv(param: string | null): string[] {
+  return (param || "")
+    .split(",")
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i);
+}
+
+function anyMatch(hay: string[], needles: string[]): boolean {
+  if (!needles.length) return true;
+  const set = new Set(hay);
+  return needles.some(n => set.has(n));
+}
+
+function logNorm(x: number, max = 200): number {
+  const v = Math.max(0, x);
+  return Math.log1p(v) / Math.log1p(max);
+}
+
+function scoreOffer(o: Offer, opts: { allowed: string[]; whaleThreshold?: number }): number {
+  const payout = logNorm(o.payout ?? 0, 200);
+  const epc = logNorm(o.epc ?? 0, 10);
+  const tier1 = new Set(["us","ca","uk","au","de","fr"]);
+  const geo_match = (o.geo || []).some(g => tier1.has(String(g).toLowerCase())) ? 1 : 0.5;
+  const friction = o.friction_minutes ?? 999;
+  const friction_bonus = friction <= 7 ? 1 : (friction <= 15 ? 0.5 : 0);
+  const traffic_match = opts.allowed.length === 0
+    ? 1
+    : (o.allowed_traffic || []).map(t => String(t).toLowerCase()).some(t => opts.allowed.includes(t)) ? 1 : 0;
+
+  const isWhale = (o.payout ?? 0) >= (opts.whaleThreshold ?? 10);
+  const W = isWhale
+    ? { w1:0.5, w2:0.2, w3:0.2, w4:0.05, w5:0.05 }
+    : { w1:0.2, w2:0.4, w3:0.2, w4:0.1,  w5:0.1  };
+
+  return (W.w1*payout) + (W.w2*epc) + (W.w3*traffic_match) + (W.w4*geo_match) + (W.w5*friction_bonus);
+}
+
 function splitOffers(
   offers: Offer[],
   reqAllowed: string[],
@@ -186,15 +224,14 @@ function matchKeywords(o: Offer, keywordsCsv?: string | null) {
 
 async function handleSearch(url: URL): Promise<Offer[]> {
   // Use curated registry merged with fallbacks, then filter by query.
-  const geo = url.searchParams.get("geo")?.toUpperCase();
-  const device = url.searchParams.get("device")?.toLowerCase();
-  const ctype = url.searchParams.get("ctype")?.toUpperCase();
-  const network = url.searchParams.get("network")?.toLowerCase() || "";
+  const geos = csv(url.searchParams.get("geo"));
+  const devices = csv(url.searchParams.get("device"));
+  const ctypes = csv(url.searchParams.get("ctype"));
+  const networks = csv(url.searchParams.get("network"));
   const max = Math.min(parseInt(url.searchParams.get("max") || "20", 10), 50);
   const channel = url.searchParams.get("channel")?.trim();
-  const allowedTraffic = ((url.searchParams.get("allowed_traffic") || "")
-    .split(",").map(s => s.trim()).filter(Boolean));
-  if (channel) allowedTraffic.push(channel);
+  const allowedTraffic = csv(url.searchParams.get("allowed_traffic"));
+  if (channel) allowedTraffic.push(channel.toLowerCase());
   const keywords = url.searchParams.get("keywords");
   const minPayout = Number(url.searchParams.get("min_payout") ?? url.searchParams.get("payout_min") ?? 0);
 
@@ -208,20 +245,27 @@ async function handleSearch(url: URL): Promise<Offer[]> {
   }
   let list = Array.from(mergedMap.values());
 
-  if (geo) list = list.filter(o => o.geo.map(g => g.toUpperCase()).includes(geo));
-  if (device) list = list.filter(o => o.device.map(d => d.toLowerCase()).includes(device));
-  if (ctype) {
-    // simple contains match against vertical or id
-    const needle = ctype.replace(/\s+/g, "");
-    list = list.filter(o => (o.vertical || "").toUpperCase().includes("SWEEPS") || o.id.toUpperCase().includes(needle));
+  if (geos.length) {
+    const wanted = geos.map(g => g.toUpperCase());
+    list = list.filter(o => anyMatch(o.geo.map(g => g.toUpperCase()), wanted));
   }
-  if (network) {
-    const nets = new Set(network.split(",").map(s => s.trim().toLowerCase()));
-    list = list.filter(o => nets.has(o.network.toLowerCase()));
+  if (devices.length) {
+    const wanted = devices;
+    list = list.filter(o => anyMatch(o.device.map(d => d.toLowerCase()), wanted));
+  }
+  if (ctypes.length && ctypes[0] !== "*") {
+    const tokens = ctypes.map(t => t.toLowerCase().replace(/[^a-z0-9]+/g, "")).filter(Boolean);
+    list = list.filter(o => {
+      const hay = `${o.vertical || ""} ${o.id || ""}`.toLowerCase().replace(/[^a-z0-9]+/g, "");
+      return tokens.some(tok => hay.includes(tok));
+    });
+  }
+  if (networks.length) {
+    const nets = new Set(networks);
+    list = list.filter(o => nets.has((o.network || "").toLowerCase()));
   }
   if (allowedTraffic.length) {
-    const wanted = new Set(allowedTraffic.map(s => s.toLowerCase()));
-    list = list.filter(o => o.allowed_traffic.some(t => wanted.has(t.toLowerCase())));
+    list = list.filter(o => anyMatch((o.allowed_traffic || []).map(t => t.toLowerCase()), allowedTraffic));
   }
   if (keywords) {
     list = list.filter(o => matchKeywords(o, keywords));
@@ -239,8 +283,8 @@ const OPENAPI_JSON = () => JSON.stringify({
   openapi: "3.1.0",
   info: {
     title: "AIQBrain Offer Engine (workers)",
-    version: "1.0.2",
-    description: "Search normalized CPA offers."
+    version: "1.1.0",
+    description: "Search normalized CPA/CPI offers with traffic and payout tiering."
   },
   servers: [
     { url: "https://aiqbrain-offer-engine.jasonhslaughter.workers.dev" }
@@ -264,18 +308,19 @@ const OPENAPI_JSON = () => JSON.stringify({
         summary: "Search normalized CPA offers",
         security: [{ ApiKeyAuth: [] }],
         parameters: [
-          { in: "query", name: "geo", schema: { type: "string", example: "US" } },
-          { in: "query", name: "device", schema: { type: "string", enum: ["mobile","desktop"], default: "mobile" } },
-          { in: "query", name: "ctype", schema: { type: "string", example: "CPA+PIN" } },
+          { in: "query", name: "geo", description: "CSV of country codes", schema: { type: "string", example: "US,CA,UK" } },
+          { in: "query", name: "device", description: "CSV of devices", schema: { type: "string", example: "mobile,desktop", default: "mobile" } },
+          { in: "query", name: "ctype", description: "CSV of content types or * for no filter", schema: { type: "string", example: "CPA,CPI,SOI,DOI,Trial,Deposit" } },
           { in: "query", name: "keywords", schema: { type: "string", example: "sweeps,gift card" } },
           { in: "query", name: "network", description: "Comma-separated networks", schema: { type: "string", example: "ogads,cpagrip" } },
           { in: "query", name: "max", schema: { type: "integer", default: 20, maximum: 50 } },
           { in: "query", name: "min_payout", schema: { type: "number" } },
-          { in: "query", name: "allowed_traffic", schema: { type: "string", example: "Reddit,TikTok,Pinterest" } },
+          { in: "query", name: "allowed_traffic", description: "CSV of traffic sources", schema: { type: "string", example: "Reddit,TikTok,Pinterest" } },
           { in: "query", name: "channel", description: "Single traffic channel (alias for allowed_traffic)", schema: { type: "string", example: "TikTok" } },
-          { in: "query", name: "friction_max", schema: { type: "integer", example: 5 } },
+          { in: "query", name: "friction_max", description: "Max minutes for GREEN tier when split_mode=traffic", schema: { type: "integer", example: 7 } },
           { in: "query", name: "allowed_traffic_mode", schema: { type: "string", enum: ["all","any"], default: "all" } },
-          { in: "query", name: "split", schema: { type: "boolean", example: true } }
+          { in: "query", name: "split", schema: { type: "boolean", example: true } },
+          { in: "query", name: "split_mode", schema: { type: "string", enum: ["traffic","payout"], default: "traffic" } }
         ],
         responses: {
           "200": {
@@ -357,6 +402,18 @@ const OPENAPI_JSON = () => JSON.stringify({
                       },
                       required: ["meta","green","yellow"]
                     }
+                  ,
+                  {
+                    type: "object",
+                    properties: {
+                      meta: { type: "object", additionalProperties: true },
+                      whales: { type: "array", items: { $ref: "#/components/schemas/Offer" } },
+                      minnows: { type: "array", items: { $ref: "#/components/schemas/Offer" } },
+                      counts: { type: "object", properties: { whales: { type: "integer" }, minnows: { type: "integer" }, total: { type: "integer" } } },
+                      rules: { type: "object", properties: { whale_threshold: { type: "number" } } }
+                    },
+                    required: ["meta","whales","minnows"]
+                  }
                   ]
                 }
               }
@@ -401,8 +458,8 @@ const OPENAPI_YAML = () => [
   "openapi: 3.1.0",
   "info:",
   "  title: AIQBrain Offer Engine (workers)",
-  "  version: 1.0.2",
-  "  description: Search normalized CPA offers.",
+  "  version: 1.1.0",
+  "  description: Search normalized CPA/CPI offers with traffic and payout tiering.",
   "servers:",
   "  - url: https://aiqbrain-offer-engine.jasonhslaughter.workers.dev",
   "paths:",
@@ -426,13 +483,16 @@ const OPENAPI_YAML = () => [
   "      parameters:",
   "        - in: query",
   "          name: geo",
-  "          schema: { type: string, example: US }",
+  "          description: CSV of country codes",
+  "          schema: { type: string, example: US,CA,UK }",
   "        - in: query",
   "          name: device",
-  "          schema: { type: string, enum: [mobile, desktop], default: mobile }",
+  "          description: CSV of devices",
+  "          schema: { type: string, example: mobile, default: mobile }",
   "        - in: query",
   "          name: ctype",
-  "          schema: { type: string, example: \"CPA+PIN\" }",
+  "          description: CSV of types or *",
+  "          schema: { type: string, example: \"CPA,CPI,SOI,DOI,Trial,Deposit\" }",
   "        - in: query",
   "          name: keywords",
   "          schema: { type: string, example: \"sweeps,gift card\" }",
@@ -446,19 +506,27 @@ const OPENAPI_YAML = () => [
   "        - in: query",
   "          name: min_payout",
   "          schema: { type: number }",
- "        - in: query",
+  "        - in: query",
+  "          name: allowed_traffic",
+  "          description: CSV of traffic sources",
+  "          schema: { type: string, example: \"Reddit,TikTok,Pinterest\" }",
+  "        - in: query",
   "          name: channel",
   "          description: Single traffic channel (alias for allowed_traffic)",
   "          schema: { type: string, example: \"TikTok\" }",
   "        - in: query",
   "          name: friction_max",
-  "          schema: { type: integer, example: 5 }",
+  "          description: Max minutes for GREEN tier when split_mode=traffic",
+  "          schema: { type: integer, example: 7 }",
   "        - in: query",
   "          name: allowed_traffic_mode",
   "          schema: { type: string, enum: [all, any], default: all }",
   "        - in: query",
   "          name: split",
   "          schema: { type: boolean, example: true }",
+  "        - in: query",
+  "          name: split_mode",
+  "          schema: { type: string, enum: [traffic, payout], default: traffic }",
   "      responses:",
   "        \"200\":",
   "          description: OK",
@@ -498,6 +566,29 @@ const OPENAPI_YAML = () => [
   "                          friction_max: { type: integer }",
   "                          allowed_traffic_mode: { type: string, enum: [all, any] }",
   "                    required: [meta, green, yellow]",
+  "                  - type: object",
+  "                    properties:",
+  "                      meta:",
+  "                        type: object",
+  "                      whales:",
+  "                        type: array",
+  "                        items:",
+  "                          $ref: \"#/components/schemas/Offer\"",
+  "                      minnows:",
+  "                        type: array",
+  "                        items:",
+  "                          $ref: \"#/components/schemas/Offer\"",
+  "                      counts:",
+  "                        type: object",
+  "                        properties:",
+  "                          whales: { type: integer }",
+  "                          minnows: { type: integer }",
+  "                          total: { type: integer }",
+  "                      rules:",
+  "                        type: object",
+  "                        properties:",
+  "                          whale_threshold: { type: number }",
+  "                    required: [meta, whales, minnows]",
   "        \"401\":",
   "          description: Unauthorized",
   "        \"500\":",
@@ -626,8 +717,9 @@ export default {
         // TODO: If you later fetch real upstreams, wrap with safeJson(...)
         const offers = await handleSearch(url);
 
-        // Split controls (still supported, even though not exposed in the Action spec)
+        // Split controls and modes
         const split = url.searchParams.get("split") === "true";
+        const splitMode = (url.searchParams.get("split_mode") || "traffic").toLowerCase() as "traffic" | "payout";
 let frictionMax: number;
 const frictionParam = url.searchParams.get("friction_max");
 if (frictionParam != null) {
@@ -639,13 +731,19 @@ if (frictionParam != null) {
 const payoutMin = Number(url.searchParams.get("min_payout") ?? url.searchParams.get("payout_min") ?? 0);
 const allowedMode = (url.searchParams.get("allowed_traffic_mode") ?? "all") as "all" | "any";
 const channel = url.searchParams.get("channel")?.trim();
-const reqAllowed = ((url.searchParams.get("allowed_traffic") ?? "")
-  .split(",").map(s => s.trim()).filter(Boolean));
-if (channel) reqAllowed.push(channel);
+const reqAllowed = csv(url.searchParams.get("allowed_traffic"));
+if (channel) reqAllowed.push(channel.toLowerCase());
+
+// Score for ranking and payout split
+const scored = offers.map(o => ({ ...o, _score: scoreOffer(o, { allowed: reqAllowed, whaleThreshold: 10 }) }));
 if (split) {
-  const networks = (url.searchParams.get("network") ?? "")
-    .split(",").map(s => s.trim()).filter(Boolean);
-  const result = splitOffers(offers, reqAllowed, { frictionMax, payoutMin, allowedMode });
+  const networks = csv(url.searchParams.get("network"));
+  if (splitMode === "payout") {
+    const whale_threshold = 10;
+    const whales = scored.filter(o => (o.payout ?? 0) >= whale_threshold)
+                         .sort((a,b) => (b._score ?? 0) - (a._score ?? 0));
+    const minnows = scored.filter(o => (o.payout ?? 0) < whale_threshold)
+                          .sort((a,b) => (b._score ?? 0) - (a._score ?? 0));
 
           const meta = {
             geo: url.searchParams.get("geo") ?? "US",
@@ -654,18 +752,43 @@ if (split) {
             networks,
             keywords: url.searchParams.get("keywords") ?? "",
             min_payout: payoutMin,
+            split_mode: splitMode,
             friction_max: frictionMax,
             allowed_traffic: reqAllowed,
             channel,
             allowed_traffic_mode: allowedMode
           };
 
-          return new Response(JSON.stringify({ meta, ...result }), {
-            headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
-          });
+          return new Response(JSON.stringify({
+            meta,
+            whales,
+            minnows,
+            counts: { whales: whales.length, minnows: minnows.length, total: scored.length },
+            rules: { whale_threshold }
+          }), { headers: { "Content-Type": "application/json", ...okCORS(originHdr) } });
         }
 
-        return new Response(JSON.stringify({ offers }), {
+        const result = splitOffers(scored, reqAllowed, { frictionMax, payoutMin, allowedMode });
+
+        return new Response(JSON.stringify({ meta: {
+            geo: url.searchParams.get("geo") ?? "US",
+            device: url.searchParams.get("device") ?? "mobile",
+            ctype: url.searchParams.get("ctype") ?? "CPA+PIN",
+            networks,
+            keywords: url.searchParams.get("keywords") ?? "",
+            min_payout: payoutMin,
+            split_mode: splitMode,
+            friction_max: frictionMax,
+            allowed_traffic: reqAllowed,
+            channel,
+            allowed_traffic_mode: allowedMode
+          },
+          ...result }), {
+          headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
+        });
+      }
+
+      return new Response(JSON.stringify({ offers: scored }), {
           headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
         });
       }

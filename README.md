@@ -26,6 +26,24 @@ Cloudflare Worker that searches curated CPA/CPI offers and serves an OpenAPI spe
    - OpenAPI version:
      - `curl -sS http://127.0.0.1:8787/openapi.json | jq .openapi`
 
+### Broader Search & Splits
+
+- Broader CSV search and higher payouts:
+  - `curl -sS -G -H "X-Api-Key: $AIQB_KEY" "$BASE/offers/search" \
+    --data-urlencode 'geo=US,CA,UK,AU,DE,FR' \
+    --data-urlencode 'device=mobile,desktop' \
+    --data-urlencode 'ctype=CPA,CPI,CC-submit,SOI,DOI,Trial,Deposit' \
+    --data-urlencode 'network=ogads,cpagrip,maxbounty,clickdealer,adcombo,everad,incomeaccess,algoaffiliates,globalwidemedia' \
+    --data-urlencode 'min_payout=10' \
+    --data-urlencode 'allowed_traffic=Facebook,Google,Native,Email,Push,Reddit,TikTok,Pinterest' \
+    --data-urlencode 'max=50' | jq '.offers | length'`
+
+- Split modes:
+  - Traffic (GREEN/YELLOW; GREEN<=7 by default):
+    - `curl -sS -G -H "X-Api-Key: $AIQB_KEY" "$BASE/offers/search" --data-urlencode 'split=true' --data-urlencode 'split_mode=traffic' | jq '{counts, sample_green: (.green[0]//null), sample_yellow: (.yellow[0]//null)}'`
+  - Payout (WHALES/MINNOWS; threshold $10):
+    - `curl -sS -G -H "X-Api-Key: $AIQB_KEY" "$BASE/offers/search" --data-urlencode 'split=true' --data-urlencode 'split_mode=payout' | jq '{counts, whales0: (.whales[0]//null), minnows0: (.minnows[0]//null)}'`
+
 ### Notes
 
 - The AI plugin manifest is served from the Worker at `/.well-known/ai-plugin.json` (auth: user_http bearer). The static copy in `public/.well-known` has been removed to keep one source of truth.
