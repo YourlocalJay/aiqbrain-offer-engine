@@ -25,11 +25,14 @@ mode = "smart"
 # Safe non-secret fallbacks (API keys are set via `wrangler secret`)
 BASE_URL = "https://aiqbrain-offer-engine.jasonhslaughter.workers.dev"
 CORS_ALLOW_ORIGIN = "*"
-NETWORKS_ENABLED = "ogads,cpagrip"
+# Enable all supported networks in production
+NETWORKS_ENABLED = "ogads,cpagrip,mylead,maxbounty"
 FALLBACK_ANDROID = "https://aiqengage.com/access"
 FALLBACK_IOS     = "https://singingfiles.com/show.php?l=0&u=2427730&id=69234&tracking_id="
 FALLBACK_GENERIC = "https://aiqengage.com/access"
 GREEN_MAX_MINUTES = "7"  # default threshold for 'GREEN' tier (videos ≤7 min)
+MYLEAD_API_BASE = "https://api.mylead.eu/api/external/v1/"
+MYLEAD_OFFERS_PATH = ""
 
 # KV namespaces (IDs from
 #   npx wrangler kv namespace create REGISTRY

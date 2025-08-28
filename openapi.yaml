@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: AIQBrain Offer Engine
-  version: 1.0.2
-  description: Search curated CPA/CPI offers.
+  version: 1.1.0
+  description: Search normalized CPA/CPI offers with traffic and payout tiering.
 servers:
   - url: https://aiqbrain-offer-engine.jasonhslaughter.workers.dev
 components:
@@ -14,23 +14,22 @@ components:
   schemas:
     Offer:
       type: object
-      required:
-        [id, name, url, network, payout, geo, device, vertical, allowed_traffic, friction_minutes]
       properties:
         id:               { type: string }
         name:             { type: string }
-        url:              { type: string }
+        url:              { type: string, format: uri }
         network:          { type: string }
-        payout:           { type: number }
+        payout:           { type: number, nullable: true }
         epc:              { type: number, nullable: true }
         geo:              { type: array, items: { type: string } }
         device:           { type: array, items: { type: string } }
-        vertical:         { type: string }
+        vertical:         { type: string, nullable: true }
         allowed_traffic:  { type: array, items: { type: string } }
-        friction_minutes: { type: integer }
-        notes:            { type: string }
+        friction_minutes: { type: integer, nullable: true }
+        notes:            { type: string, nullable: true }
         _score:           { type: number }
-        tier:              { type: string, enum: [green, yellow], description: "Present only when split=true" }
+        tier:             { type: string, enum: [green, yellow], description: "Present only when split=true" }
+      required: [id, name, url, network]
 
     SearchResponse:
       type: object
@@ -50,12 +49,17 @@ components:
     SplitRules:
       type: object
       properties:
-        min_payout: { type: number, default: 2.0 }
-        friction_max: { type: integer, default: 6 }
+        min_payout: { type: number }
+        friction_max: { type: integer }
         allowed_traffic_mode:
           type: string
           enum: [all, any]
           default: all
+
+    PayoutSplitRules:
+      type: object
+      properties:
+        whale_threshold: { type: number, default: 10 }
 
     SplitSearchResponse:
       type: object
@@ -71,6 +75,28 @@ components:
           $ref: "#/components/schemas/SplitCounts"
         rules:
           $ref: "#/components/schemas/SplitRules"
+        meta:
+          type: object
+          description: Optional metadata about the request and split evaluation
+
+    PayoutSplitResponse:
+      type: object
+      required: [whales, minnows, counts, rules]
+      properties:
+        whales:
+          type: array
+          items: { $ref: "#/components/schemas/Offer" }
+        minnows:
+          type: array
+          items: { $ref: "#/components/schemas/Offer" }
+        counts:
+          type: object
+          properties:
+            whales: { type: integer }
+            minnows: { type: integer }
+            total: { type: integer }
+        rules:
+          $ref: "#/components/schemas/PayoutSplitRules"
         meta:
           type: object
           description: Optional metadata about the request and split evaluation
@@ -110,44 +136,62 @@ paths:
       parameters:
         - in: query
           name: geo
-          required: true
-          schema: { type: string, example: US }
+          description: CSV of country codes
+          schema: { type: string, example: "US,CA,UK" }
         - in: query
           name: device
-          required: true
-          schema: { type: string, example: mobile, enum: [mobile, desktop, any], default: mobile }
+          description: CSV of devices
+          schema: { type: string, example: "mobile,desktop", default: mobile }
         - in: query
           name: ctype
-          required: true
-          schema: { type: string, example: "CPA+PIN" }
+          description: CSV of content types or * for no filter
+          schema: { type: string, example: "CPA,CPI,SOI,DOI,Trial,Deposit" }
+        - in: query
+          name: keywords
+          schema: { type: string, example: "sweeps,gift card" }
         - in: query
           name: network
+          description: Comma-separated networks
           schema: { type: string, example: "ogads,cpagrip" }
         - in: query
           name: max
           schema: { type: integer, default: 20, maximum: 50 }
         - in: query
           name: min_payout
-          schema: { type: number, description: "Minimum payout for Green tier (used when split=true)" }
+          schema: { type: number }
         - in: query
           name: allowed_traffic
+          description: CSV of traffic sources
           schema: { type: string, example: "Reddit,TikTok,Pinterest" }
         - in: query
+          name: channel
+          description: Single traffic channel (alias for allowed_traffic)
+          schema: { type: string, example: "TikTok" }
+        - in: query
           name: split
-          schema: { type: boolean, default: false, description: "Return Green/Yellow buckets when true" }
+          schema: { type: boolean, default: false, description: "Return bucketed responses when true" }
+        - in: query
+          name: split_mode
+          schema:
+            type: string
+            enum: [traffic, payout]
+            default: traffic
         - in: query
           name: payout_min
           schema: { type: number, default: 2.0, deprecated: true, description: "Deprecated: use min_payout instead" }
         - in: query
           name: friction_max
-          schema: { type: integer, default: 6, description: "Max minutes to complete flow for Green tier (used when split=true)" }
+          schema: { type: integer, example: 7, description: "Max minutes for GREEN tier when split_mode=traffic" }
         - in: query
           name: allowed_traffic_mode
           schema:
             type: string
             enum: [all, any]
             default: all
-            description: "When set to 'all', offers must allow all requested traffic sources; 'any' allows any one"
+        - in: query
+          name: whale_threshold
+          description: Minimum payout threshold for whales
+          schema: { type: number, default: 10 }
       responses:
         "200":
           description: Array of offers
@@ -157,6 +201,7 @@ paths:
                 oneOf:
                   - $ref: "#/components/schemas/SearchResponse"
                   - $ref: "#/components/schemas/SplitSearchResponse"
+                  - $ref: "#/components/schemas/PayoutSplitResponse"
               examples:
                 flat:
                   summary: Flat list (split=false)
@@ -164,7 +209,7 @@ paths:
                     offers:
                       - id: "ogads_us_android_68831"
                         name: "US Android — $750 Gift Card (OGAds)"
-                        url: "https://singingfiles.com/show.php?l=0&amp;u=2427730&amp;id=68831&amp;tracking_id="
+                        url: "https://singingfiles.com/show.php?l=0&u=2427730&id=68831&tracking_id="
                         network: "OGAds"
                         payout: 2.1
                         epc: null
@@ -177,7 +222,7 @@ paths:
                         _score: 15.1
                       - id: "ogads_us_ios_69234"
                         name: "US iOS — $750 Gift Card (OGAds)"
-                        url: "https://singingfiles.com/show.php?l=0&amp;u=2427730&amp;id=69234&amp;tracking_id="
+                        url: "https://singingfiles.com/show.php?l=0&u=2427730&id=69234&tracking_id="
                         network: "OGAds"
                         payout: 2.1
                         epc: null
@@ -190,7 +235,7 @@ paths:
                         _score: 15.1
                       - id: "cpagrip_us_giftcard_a1"
                         name: "US Gift Card — Mobile (CPAGrip)"
-                        url: "https://aiqbrain-offer-engine.jasonhslaughter.workers.dev/offers/redirect?offer_id=cpagrip_us_giftcard_a1&amp;tracking_id="
+                        url: "https://aiqbrain-offer-engine.jasonhslaughter.workers.dev/offers/redirect?offer_id=cpagrip_us_giftcard_a1&tracking_id="
                         network: "CPAGrip"
                         payout: 1.8
                         epc: null
@@ -202,12 +247,12 @@ paths:
                         notes: "Short flow; good weekend volume"
                         _score: 13.8
                 split:
-                  summary: Split buckets (split=true)
+                  summary: Traffic split (split=true&split_mode=traffic)
                   value:
                     green:
                       - id: "ogads_us_android_68831"
                         name: "US Android — $750 Gift Card (OGAds)"
-                        url: "https://singingfiles.com/show.php?l=0&amp;u=2427730&amp;id=68831&amp;tracking_id="
+                        url: "https://singingfiles.com/show.php?l=0&u=2427730&id=68831&tracking_id="
                         network: "OGAds"
                         payout: 2.1
                         epc: null
@@ -222,7 +267,7 @@ paths:
                     yellow:
                       - id: "cpagrip_us_giftcard_a1"
                         name: "US Gift Card — Mobile (CPAGrip)"
-                        url: "https://aiqbrain-offer-engine.jasonhslaughter.workers.dev/offers/redirect?offer_id=cpagrip_us_giftcard_a1&amp;tracking_id="
+                        url: "https://aiqbrain-offer-engine.jasonhslaughter.workers.dev/offers/redirect?offer_id=cpagrip_us_giftcard_a1&tracking_id="
                         network: "CPAGrip"
                         payout: 1.8
                         epc: null
@@ -235,7 +280,24 @@ paths:
                         _score: 13.8
                         tier: "yellow"
                     counts: { green: 1, yellow: 1, total: 2 }
-                    rules: { min_payout: 2.0, friction_max: 6, allowed_traffic_mode: "all" }
+                    rules: { min_payout: 2.0, friction_max: 7, allowed_traffic_mode: "all" }
+                payout_split:
+                  summary: Payout split (split=true&split_mode=payout)
+                  value:
+                    whales:
+                      - id: "high_payout_offer_1"
+                        name: "High Payout Offer"
+                        url: "https://example.com/offer"
+                        network: "DemoNet"
+                        payout: 12.0
+                        geo: ["US"]
+                        device: ["mobile"]
+                        allowed_traffic: ["Reddit"]
+                        friction_minutes: 5
+                        _score: 23.4
+                    minnows: []
+                    counts: { whales: 1, minnows: 0, total: 1 }
+                    rules: { whale_threshold: 10 }
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":

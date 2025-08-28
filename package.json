@@ -1,4 +1,9 @@
 {
+  "scripts": {
+    "dev": "wrangler dev --local",
+    "smoke": "./smoke.sh",
+    "health:adv": "./scripts/health-adv.sh"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250826.0"
   }

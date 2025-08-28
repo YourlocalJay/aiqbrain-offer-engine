@@ -9,6 +9,88 @@ Cloudflare Worker that searches curated CPA/CPI offers and serves an OpenAPI spe
 - Public Vault: `/vault` (HTML), `/vault/search` (HTML; supports split=true)
 - Curated registry: `registry.json` (merged over built-in fallbacks)
 
+### MyLead Token (Username/Password Flow)
+
+MyLead external API tokens expire every few hours. Configure username/password and the worker will auto-login and cache a Bearer token in KV.
+
+- Secrets (Wrangler):
+  - `MYLEAD_USERNAME` — your MyLead username or email
+  - `MYLEAD_PASSWORD` — your MyLead password
+  - Optional `MYLEAD_BASE` — e.g. `https://api.mylead.eu/api/external/v1/` (default)
+  - Optional `MYLEAD_API_BASE` — alternative base (e.g. `https://mylead.global`)
+  - Optional `MYLEAD_OFFERS_PATH` — explicit offers path (e.g. `/api/v2/offers`)
+  - Optional `MYLEAD_TOKEN_TTL` — seconds to cache token (default 10800)
+
+- Enable network:
+  - In `wrangler.toml` `[vars]`, include `mylead` in `NETWORKS_ENABLED`.
+
+- Admin refresh endpoints (require API key auth):
+  - Refresh token: `POST /offers/admin/auth/mylead/refresh-token` → `{ status, token_prefix }`
+  - Refresh offers cache: `POST /offers/admin/refresh/mylead?max=100` → `202 Accepted`
+
+- Notes:
+  - The worker tries `/auth/login` then `/login` at `MYLEAD_BASE` with `{username,password}` and falls back to `{email,password}`.
+  - If `MYLEAD_API_KEY` is set as a secret, it is used directly and login is skipped.
+
+### MyLead Fast Path (Bearer Token Secret)
+
+If your panel issues a token via `POST <MYLEAD_BASE>/auth/token`:
+
+- Secrets (Wrangler):
+  - `MYLEAD_BASE` — e.g. `https://<panel>.mylead.io/api/external/v1`
+  - `MYLEAD_API_KEY` — paste the token from the auth call
+
+- Usage:
+  - The worker sends `Authorization: Bearer <MYLEAD_API_KEY>` to `${MYLEAD_BASE}/offers` (or set `MYLEAD_OFFERS_PATH=/campaigns`).
+  - You can force refresh the in-memory cache via: `POST /offers/admin/refresh/mylead` (requires API key auth).
+
+### MaxBounty Token (Email/Password Flow)
+
+MaxBounty issues a short‑lived token (expires ~2h) via email+password. The worker logs in and caches the token in memory and KV; it refreshes early and retries once on 401.
+
+- Secrets (Wrangler):
+  - `MAXBOUNTY_EMAIL` — your MaxBounty login email
+  - `MAXBOUNTY_PASSWORD` — your MaxBounty password
+  - Optional `MAXBOUNTY_BASE` — default `https://affiliates.maxbounty.com`
+  - Optional `MAXBOUNTY_TOKEN_TTL` — seconds to cache token (default 6000 ≈100m)
+  - Optional `MAXBOUNTY_OFFERS_PATH` — offers endpoint path (default `/offers`)
+
+- Admin refresh endpoints (require API key auth):
+  - Refresh token: `POST /offers/admin/auth/maxbounty/refresh-token`
+  - Refresh offers cache: `POST /offers/admin/refresh/maxbounty?max=100`
+
+- Use in search:
+  - Ensure `NETWORKS_ENABLED` includes `maxbounty`.
+  - Query: `GET /offers/search?...&network=maxbounty`
+
+### CPAGrip Private Feed
+
+Fetches from CPAGrip's private JSON feed when credentials are set; results are cached in KV and merged into search results.
+
+- Secrets (Wrangler):
+  - `CPAGRIP_USER_ID` — your CPAGrip user/publisher ID
+  - `CPAGRIP_SECRET_KEY` — your private API key
+  - Optional `CPAGRIP_BASE` — default `https://www.cpagrip.com/common/offer_feed_json.php`
+
+- Admin refresh (requires API auth):
+  - `POST /offers/admin/refresh/cpagrip?max=100`
+
+- Enable network: add `cpagrip` in `NETWORKS_ENABLED`.
+
+### OGAds (UnlockContent) API
+
+Pulls live offers from OGAds via the UnlockContent API using a Bearer token.
+
+- Secrets (Wrangler):
+  - `OGADS_API_KEY` — your OGAds API token
+  - Optional `OGADS_BASE` — default `https://unlockcontent.net/api/v2`
+  - Optional `OGADS_OFFERS_PATH` — default `/offers`
+
+- Admin refresh (requires API auth):
+  - `POST /offers/admin/refresh/ogads?max=100`
+
+- Enable network: include `ogads` in `NETWORKS_ENABLED`.
+
 ### Quick Start (local)
 
 1) Install deps (types only):

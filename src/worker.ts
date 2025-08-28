@@ -11,6 +11,7 @@ type ExecutionCtx = {
 type KVNamespace = {
   get(key: string, options?: any): Promise<string | null>;
   put(key: string, value: string, options?: { expirationTtl?: number } & Record<string, any>): Promise<void>;
+  delete?(key: string): Promise<void>;
 };
 type ExportedHandlerShim<E = Env> = {
   fetch(request: Request, env: E, ctx: ExecutionCtx): Promise<Response>;
@@ -24,9 +25,32 @@ export interface Env {
   // Network toggles and secrets (optional)
   NETWORKS_ENABLED?: string; // csv like "ogads,cpagrip,maxbounty,mylead"
   MAXBOUNTY_API_KEY?: string;
-  MYLEAD_API_KEY?: string;
-  MYLEAD_BASE?: string; // optional override base URL
+  MAXBOUNTY_EMAIL?: string;    // email for MaxBounty auth
+  MAXBOUNTY_PASSWORD?: string; // password for MaxBounty auth
+  MAXBOUNTY_TOKEN_TTL?: string; // seconds to cache token in KV/memory (default ~100m)
+  MAXBOUNTY_BASE?: string; // optional base URL, defaults to https://affiliates.maxbounty.com
+  MAXBOUNTY_OFFERS_PATH?: string; // optional offers path, e.g. /offers or /affiliate/offers
+  MYLEAD_API_KEY?: string; // Bearer token (optional; if absent, username/password flow can be used)
+  MYLEAD_USERNAME?: string; // username or email for login-based token flow
+  MYLEAD_PASSWORD?: string; // password for login-based token flow
+  MYLEAD_BASE?: string; // optional override base URL (legacy)
+  MYLEAD_API_BASE?: string; // optional override base URL (preferred)
+  MYLEAD_OFFERS_PATH?: string; // optional offers path (e.g., /api/v2/offers)
   OFFERS_CACHE_TTL?: string; // ttl in seconds for upstream cache
+  // Non-secret vars from wrangler.toml [vars]
+  BASE_URL?: string;
+  GREEN_MAX_MINUTES?: string;
+  FALLBACK_GENERIC?: string;
+  MYLEAD_TOKEN_TTL?: string; // seconds to cache login token in KV (default ~3h)
+  // CPAGrip private feed
+  CPAGRIP_USER_ID?: string;
+  CPAGRIP_SECRET_KEY?: string;
+  CPAGRIP_PUBLISHER_ID?: string;
+  CPAGRIP_BASE?: string;
+  // OGAds (UnlockContent) Bearer API
+  OGADS_API_KEY?: string; // Bearer token
+  OGADS_BASE?: string; // default https://unlockcontent.net/api/v2
+  OGADS_OFFERS_PATH?: string; // e.g., /offers
 }
 
 type Offer = {
@@ -182,32 +206,85 @@ async function kvPutJSON(ns: KVNamespace | undefined, key: string, value: any, t
 type AdapterParams = { geos: string[]; devices: string[]; ctypes: string[]; max: number };
 
 async function maxbountyOffers(params: AdapterParams, env?: Env): Promise<Offer[]> {
-  // Stub: prefer cached KV; return [] if none or no secret.
-  // To enable: set MAXBOUNTY_API_KEY secret and write the fetch adapter; seed KV key 'offers:maxbounty'.
-  const cached = await kvGetJSON<Offer[]>(env?.REGISTRY, 'offers:maxbounty');
-  if (Array.isArray(cached) && cached.length) return cached.slice(0, params.max).map(NormalizeNet('MaxBounty'));
-  if (!env?.MAXBOUNTY_API_KEY) return [];
-  // TODO: implement real fetch to MaxBounty API using env.MAXBOUNTY_API_KEY
-  return [];
-}
-
-async function myleadOffers(params: AdapterParams, env?: Env): Promise<Offer[]> {
-  const cacheKey = 'offers:mylead';
+  // Try cached KV
+  const cacheKey = 'offers:maxbounty';
   const cached = await kvGetJSON<Offer[]>(env?.REGISTRY, cacheKey);
   if (Array.isArray(cached) && cached.length) return cached.slice(0, params.max);
-  if (!env?.MYLEAD_API_KEY) return [];
-  const base = (env.MYLEAD_BASE || 'https://api.mylead.eu/api/external/v1/').replace(/\/$/, '/');
-  const q = new URL(base + 'offers');
-  // Attempt to request a larger page if supported; harmless if ignored by API.
-  q.searchParams.set('per_page', String(Math.min(100, Math.max(20, params.max || 20))));
+
+  // Fetch live using email/password auth if configured
+  if (!env) return [];
+  const res = await mbFetch(resolveMaxBountyOffersPath(env), env).catch(() => null);
+  if (!res || !res.ok) return [];
+  const data = await safeJson(res).catch(() => ({} as any)).catch(() => ({} as any));
+  const arr: any[] = Array.isArray(data)
+    ? data
+    : Array.isArray((data as any).data)
+      ? (data as any).data
+      : Array.isArray((data as any).offers)
+        ? (data as any).offers
+        : [];
+  const normalized = arr.map(NormalizeNet('MaxBounty')).filter(o => o.url);
+  const ttl = Number(env?.OFFERS_CACHE_TTL || 900);
+  await kvPutJSON(env?.REGISTRY, cacheKey, normalized, ttl);
+  return normalized.slice(0, params.max);
+}
+
+async function myleadOffers(params: AdapterParams, env?: Env, options?: { force?: boolean }): Promise<Offer[]> {
+  const cacheKey = 'offers:mylead';
+  if (!options?.force) {
+    const cached = await kvGetJSON<Offer[]>(env?.REGISTRY, cacheKey);
+    if (Array.isArray(cached) && cached.length) return cached.slice(0, params.max);
+  }
+  // Obtain auth token: prefer configured MYLEAD_API_KEY, else try username/password login flow with caching
+  let token = env?.MYLEAD_API_KEY;
+  if (!token) {
+    token = await getMyleadToken(env);
+    if (!token) return [];
+  }
+  const base = (env?.MYLEAD_BASE || env?.MYLEAD_API_BASE || 'https://api.mylead.eu/api/external/v1/').replace(/\/$/, '/');
+  // Resolve offers path
+  let offersPath = env?.MYLEAD_OFFERS_PATH || '';
+  if (!offersPath) {
+    const isPublisher = /\/publisher\//i.test(base);
+    offersPath = isPublisher ? 'campaigns' : 'offers';
+  }
+  // Build URL safely
+  const q = new URL((offersPath.startsWith('http') ? offersPath : base + offersPath.replace(/^\//, '')));
+  const pageSize = String(Math.min(100, Math.max(20, params.max || 20)));
+  // Only set pagination if not explicitly provided in offersPath
+  if (!q.searchParams.has('per_page') && !q.searchParams.has('limit')) {
+    if (/\/publisher\//i.test(base) || /campaign/i.test(offersPath)) q.searchParams.set('limit', pageSize);
+    else q.searchParams.set('per_page', pageSize);
+  }
   try {
     const res = await fetch(q.toString(), {
-      headers: { Authorization: `Bearer ${env.MYLEAD_API_KEY}`, Accept: 'application/json' }
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
     });
     if (!res.ok) return [];
     const data = await res.json().catch(() => ({}));
-    const arr: any[] = Array.isArray(data) ? data : (Array.isArray((data as any).data) ? (data as any).data : (Array.isArray((data as any).offers) ? (data as any).offers : []));
-    const normalized = arr.map(NormalizeNet('MyLead')).filter(o => o.url);
+    // Accept several common shapes
+    const arr: any[] = Array.isArray(data)
+      ? data
+      : Array.isArray((data as any).data)
+        ? (data as any).data
+        : Array.isArray((data as any).offers)
+          ? (data as any).offers
+          : Array.isArray((data as any).campaigns)
+            ? (data as any).campaigns
+            : Array.isArray((data as any).items)
+              ? (data as any).items
+              : [];
+    // Normalize MyLead-specific fields before applying generic normalization
+    const normalized = arr.map((raw: any) => {
+      const o: any = { ...raw };
+      if (!o.url) o.url = raw.trackingLink || raw.link || raw.preview_url || raw.ref_link || '';
+      if (o.payout == null && typeof raw.rate === 'number') o.payout = raw.rate;
+      if (!Array.isArray(o.geo) && Array.isArray(raw.countries)) o.geo = raw.countries;
+      if (!Array.isArray(o.device) && Array.isArray(raw.devices)) o.device = raw.devices;
+      if (!Array.isArray(o.allowed_traffic) && Array.isArray(raw.trafficTypes)) o.allowed_traffic = raw.trafficTypes;
+      if (!o.notes && raw.descriptionShort) o.notes = raw.descriptionShort;
+      return NormalizeNet('MyLead')(o);
+    }).filter((o: Offer) => o.url);
     const ttl = Number(env?.OFFERS_CACHE_TTL || 900);
     await kvPutJSON(env?.REGISTRY, cacheKey, normalized, ttl);
     return normalized.slice(0, params.max);
@@ -216,18 +293,268 @@ async function myleadOffers(params: AdapterParams, env?: Env): Promise<Offer[]> 
   }
 }
 
+async function cpagripOffers(params: AdapterParams, env?: Env): Promise<Offer[]> {
+  const cacheKey = 'offers:cpagrip';
+  const cached = await kvGetJSON<Offer[]>(env?.REGISTRY, cacheKey);
+  if (Array.isArray(cached) && cached.length) return cached.slice(0, params.max);
+  if (!env?.CPAGRIP_USER_ID || !env?.CPAGRIP_SECRET_KEY) return [];
+  const base = (env.CPAGRIP_BASE || 'https://www.cpagrip.com/common/offer_feed_json.php');
+  const u = new URL(base);
+  u.searchParams.set('user_id', env.CPAGRIP_USER_ID);
+  u.searchParams.set('key', env.CPAGRIP_SECRET_KEY);
+  if (!u.searchParams.has('format')) u.searchParams.set('format', 'json');
+  try {
+    const res = await fetch(u.toString(), { headers: { Accept: 'application/json' } });
+    if (!res.ok) return [];
+    const data: any = await res.json().catch(() => ({}));
+    const arr: any[] = Array.isArray(data)
+      ? data
+      : Array.isArray(data.offers)
+        ? data.offers
+        : Array.isArray(data.data)
+          ? data.data
+          : [];
+    const normalized = arr.map((raw: any) => {
+      const o: any = { ...raw };
+      if (!o.url) o.url = raw.offerlink || raw.tracking_url || raw.url || '';
+      if (typeof o.payout !== 'number') {
+        const n = Number(raw.payout ?? raw.rate);
+        if (!Number.isNaN(n)) o.payout = n;
+      }
+      // Geo normalization and inference
+      const geoFrom = (): string[] => {
+        const vals: string[] = [];
+        const pushVals = (v: any) => {
+          if (!v) return;
+          if (Array.isArray(v)) v.forEach(x => pushVals(x));
+          else String(v).split(',').forEach(x => { const t = x.trim(); if (t) vals.push(t); });
+        };
+        pushVals(raw.countries);
+        pushVals(raw.country);
+        pushVals(raw.country_code);
+        pushVals(raw.country_iso);
+        pushVals(raw.countryIso);
+        pushVals(raw.geo);
+        const upper = vals.map(s => s.toUpperCase().replace(/[^A-Z]/g, ''))
+                          .filter(Boolean);
+        // Infer from name if still empty
+        if (upper.length === 0) {
+          const nameStr = String(raw.name || raw.offer_name || raw.title || '')
+            .toUpperCase();
+          const known = ["US","CA","UK","AU","DE","FR","IE","NZ","ES","IT","NL","SE","NO","DK"];
+          for (const k of known) {
+            if (new RegExp(`(^|[^A-Z])${k}([^A-Z]|$)`).test(nameStr)) upper.push(k);
+          }
+        }
+        // de-dup
+        return Array.from(new Set(upper));
+      };
+      if (!Array.isArray(o.geo) || o.geo.length === 0) {
+        const g = geoFrom();
+        if (g.length) o.geo = g;
+      }
+      if (!Array.isArray(o.device) && raw.devices) {
+        o.device = Array.isArray(raw.devices) ? raw.devices : [String(raw.devices)];
+      }
+      if (!Array.isArray(o.allowed_traffic) && raw.allowed_traffic_sources) {
+        o.allowed_traffic = Array.isArray(raw.allowed_traffic_sources) ? raw.allowed_traffic_sources : [String(raw.allowed_traffic_sources)];
+      }
+      if (!o.vertical) o.vertical = raw.category || raw.vertical || null;
+      return NormalizeNet('CPAGrip')(o);
+    }).filter((o: Offer) => o.url);
+    const ttl = Number(env?.OFFERS_CACHE_TTL || 900);
+    await kvPutJSON(env?.REGISTRY, cacheKey, normalized, ttl);
+    return normalized.slice(0, params.max);
+  } catch {
+    return [];
+  }
+}
+
+async function ogadsOffers(params: AdapterParams, env?: Env, ctx?: { req?: Request; url?: URL }): Promise<Offer[]> {
+  const cacheKey = 'offers:ogads';
+  const cached = await kvGetJSON<Offer[]>(env?.REGISTRY, cacheKey);
+  if (Array.isArray(cached) && cached.length) return cached.slice(0, params.max);
+  if (!env?.OGADS_API_KEY) return [];
+  const base = (env.OGADS_BASE || 'https://unlockcontent.net/api/v2').replace(/\/$/, '');
+  const path = (env.OGADS_OFFERS_PATH || '/offers');
+  const endpoint = base + (path.startsWith('/') ? path : '/' + path);
+  // Required query params: ip, user_agent; optional: ctype, max, min
+  const req = ctx?.req;
+  const srcUrl = ctx?.url;
+  const ip = req?.headers.get('CF-Connecting-IP')
+    || (req?.headers.get('X-Forwarded-For') || '').split(',')[0].trim()
+    || '8.8.8.8';
+  const ua = req?.headers.get('User-Agent') || 'Mozilla/5.0 (compatible; AIQBrain/1.0)';
+  const q = new URL(endpoint);
+  q.searchParams.set('ip', ip);
+  q.searchParams.set('user_agent', ua);
+  // Allow override via query string if provided
+  const ogCtype = srcUrl?.searchParams.get('ogads_ctype');
+  if (ogCtype != null && ogCtype !== '') q.searchParams.set('ctype', ogCtype);
+  // Max/min
+  q.searchParams.set('max', String(params.max || 50));
+  const minPayoutStr = srcUrl?.searchParams.get('min_payout') || srcUrl?.searchParams.get('payout_min');
+  if (minPayoutStr) {
+    const v = Number(minPayoutStr);
+    if (!Number.isNaN(v) && v > 0) q.searchParams.set('min', String(v));
+  }
+  try {
+    const res = await fetch(q.toString(), { headers: { Authorization: `Bearer ${env.OGADS_API_KEY}`, Accept: 'application/json' }});
+    if (!res.ok) return [];
+    const data: any = await res.json().catch(() => ({}));
+    const arr: any[] = Array.isArray(data) ? data
+      : Array.isArray(data.data) ? data.data
+      : Array.isArray(data.offers) ? data.offers
+      : Array.isArray(data.items) ? data.items
+      : [];
+    const normalized = arr.map((raw: any) => {
+      const o: any = { ...raw };
+      if (!o.url) o.url = raw.tracking_url || raw.trackingLink || raw.link || raw.preview_url || raw.ref_link || '';
+      if (typeof o.payout !== 'number') {
+        const n = Number(raw.payout ?? raw.rate);
+        if (!Number.isNaN(n)) o.payout = n;
+      }
+      if (!Array.isArray(o.geo)) {
+        if (raw.country) o.geo = [String(raw.country)];
+        else if (Array.isArray(raw.countries)) o.geo = raw.countries;
+      }
+      if (!Array.isArray(o.device) && raw.devices) o.device = Array.isArray(raw.devices) ? raw.devices : [String(raw.devices)];
+      if (!Array.isArray(o.allowed_traffic) && (raw.allowed_traffic_sources || raw.allowed_traffic)) {
+        const a = raw.allowed_traffic_sources ?? raw.allowed_traffic;
+        o.allowed_traffic = Array.isArray(a) ? a : [String(a)];
+      }
+      if (!o.vertical) o.vertical = raw.category || raw.vertical || null;
+      return NormalizeNet('OGAds')(o);
+    }).filter((o: Offer) => o.url);
+    const ttl = Number(env?.OFFERS_CACHE_TTL || 900);
+    await kvPutJSON(env?.REGISTRY, cacheKey, normalized, ttl);
+    return normalized.slice(0, params.max);
+  } catch {
+    return [];
+  }
+}
+
+// ---- MyLead login token helper (username/password -> Bearer) ----
+async function getMyleadToken(env?: Env): Promise<string | null> {
+  if (!env) return null;
+  // Try cached token in KV first
+  const cached = await kvGetJSON<{ token: string }>(env.REGISTRY, 'secrets:mylead_token');
+  if (cached?.token) return cached.token;
+  // No cached token — try to login using username/password
+  return await refreshMyleadToken(env);
+}
+
+async function refreshMyleadToken(env: Env): Promise<string | null> {
+  if (!env?.MYLEAD_USERNAME || !env?.MYLEAD_PASSWORD) return null;
+  const base = (env.MYLEAD_BASE || env.MYLEAD_API_BASE || 'https://api.mylead.eu/api/external/v1/').replace(/\/$/, '/');
+  const loginUrls = [base + 'auth/login', base + 'login']; // try common endpoints
+  const bodies = [
+    { username: env.MYLEAD_USERNAME, password: env.MYLEAD_PASSWORD },
+    { email: env.MYLEAD_USERNAME, password: env.MYLEAD_PASSWORD }
+  ];
+  let token: string | null = null;
+  for (const url of loginUrls) {
+    for (const body of bodies) {
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        if (!res.ok) continue;
+        const json: any = await res.json().catch(() => ({}));
+        token = json?.access_token || json?.token || json?.accessToken || null;
+        if (token) break;
+      } catch {}
+    }
+    if (token) break;
+  }
+  if (!token) return null;
+  const ttl = Number(env.MYLEAD_TOKEN_TTL || 10800); // default 3 hours
+  await kvPutJSON(env.REGISTRY, 'secrets:mylead_token', { token }, ttl);
+  return token;
+}
+
+// ===== MaxBounty auth (email/password -> mb-api-token) =====
+type MbTokenMem = { value: string; exp: number } | null;
+let mbTokenMem: MbTokenMem = null;
+
+function maxbountyBase(env?: Env) {
+  return (env?.MAXBOUNTY_BASE || 'https://affiliates.maxbounty.com').replace(/\/$/, '');
+}
+function resolveMaxBountyOffersPath(env: Env) {
+  // Configurable; try a sensible default if not provided.
+  const path = env.MAXBOUNTY_OFFERS_PATH || '/offers';
+  return path.startsWith('/') ? path : `/${path}`;
+}
+
+async function getMaxBountyToken(env: Env): Promise<string | null> {
+  const now = Date.now();
+  if (mbTokenMem && now < mbTokenMem.exp) return mbTokenMem.value;
+  // try KV
+  const cached = await kvGetJSON<{ token: string; exp?: number }>(env.REGISTRY, 'secrets:maxbounty_token');
+  if (cached?.token) {
+    // If exp missing, trust it for remaining TTL handled by KV; still set a short in-mem window
+    const exp = cached.exp && cached.exp > now ? cached.exp : now + 20 * 60 * 1000;
+    mbTokenMem = { value: cached.token, exp };
+    return cached.token;
+  }
+  return await refreshMaxBountyToken(env);
+}
+
+async function refreshMaxBountyToken(env: Env): Promise<string | null> {
+  const email = env.MAXBOUNTY_EMAIL || '';
+  const password = env.MAXBOUNTY_PASSWORD || '';
+  if (!email || !password) return null;
+  const authUrl = maxbountyBase(env) + '/authentication';
+  try {
+    const res = await fetch(authUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data: any = await res.json().catch(() => ({}));
+    const token = data?.['mb-api-token'];
+    if (!res.ok || !token) return null;
+    // token lasts ~2h. Refresh ~100m ahead of hard expiry.
+    const now = Date.now();
+    const ttlSec = Number(env.MAXBOUNTY_TOKEN_TTL || 6000); // default ~100 minutes
+    const exp = now + ttlSec * 1000;
+    mbTokenMem = { value: token, exp };
+    await kvPutJSON(env.REGISTRY, 'secrets:maxbounty_token', { token, exp }, ttlSec);
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+async function mbFetch(path: string, env: Env): Promise<Response> {
+  const base = maxbountyBase(env);
+  let token = await getMaxBountyToken(env);
+  if (!token) throw new Error('MaxBounty token not available');
+  let res = await fetch(base + path, { headers: { 'x-access-token': token } });
+  if (res.status === 401) {
+    // refresh once
+    mbTokenMem = null;
+    token = await refreshMaxBountyToken(env);
+    if (!token) return res;
+    res = await fetch(base + path, { headers: { 'x-access-token': token } });
+  }
+  return res;
+}
+
 function NormalizeNet(networkName: string) {
   return (o: any): Offer => ({
-    id: o.id || o.offer_id || cryptoRandomId(),
-    name: o.name || o.title || '',
-    url: o.url || o.tracking_url || o.link || '',
+    id: o.id || o.offer_id || o.campaign_id || cryptoRandomId(),
+    name: o.name || o.title || o.campaign_name || '',
+    url: o.url || o.tracking_url || o.link || o.ref_link || o.preview_url || '',
     network: o.network || networkName,
     payout: o.payout ?? null,
     epc: o.epc ?? null,
-    geo: Array.isArray(o.geo) ? o.geo : (o.geo ? [String(o.geo)] : []),
+    geo: Array.isArray(o.geo) ? o.geo : (Array.isArray(o.countries) ? o.countries : (o.geo ? [String(o.geo)] : [])),
     device: Array.isArray(o.device) ? o.device : (o.device ? [String(o.device)] : []),
-    vertical: o.vertical || o.category || null,
-    allowed_traffic: Array.isArray(o.allowed_traffic) ? o.allowed_traffic : (o.allowed_traffic ? [String(o.allowed_traffic)] : []),
+    vertical: o.vertical || o.category || o.vertical_name || null,
+    allowed_traffic: Array.isArray(o.allowed_traffic) ? o.allowed_traffic : (o.allowed_sources ? o.allowed_sources : (o.allowed_traffic ? [String(o.allowed_traffic)] : [])),
     friction_minutes: o.friction_minutes ?? null,
     notes: o.notes || ''
   });
@@ -331,7 +658,7 @@ function matchKeywords(o: Offer, keywordsCsv?: string | null) {
   return kw.some(k => hay.includes(k));
 }
 
-async function handleSearch(url: URL, env?: Env): Promise<Offer[]> {
+async function handleSearch(url: URL, env?: Env, req?: Request): Promise<Offer[]> {
   // Prepare requested filters for potential upstream adapters
   const reqGeos = csv(url.searchParams.get("geo"));
   const reqDevices = csv(url.searchParams.get("device"));
@@ -353,6 +680,14 @@ async function handleSearch(url: URL, env?: Env): Promise<Offer[]> {
   let external: Offer[] = [];
   try {
     const enabled = new Set(csv(env?.NETWORKS_ENABLED || ""));
+    if (enabled.has("ogads")) {
+      const og = await ogadsOffers({ geos: reqGeos, devices: reqDevices, ctypes: reqCtypes, max }, env, { req, url });
+      external = external.concat(og);
+    }
+    if (enabled.has("cpagrip")) {
+      const cg = await cpagripOffers({ geos: reqGeos, devices: reqDevices, ctypes: reqCtypes, max }, env);
+      external = external.concat(cg);
+    }
     if (enabled.has("maxbounty")) {
       const mb = await maxbountyOffers({ geos: reqGeos, devices: reqDevices, ctypes: reqCtypes, max }, env);
       external = external.concat(mb);
@@ -372,8 +707,13 @@ async function handleSearch(url: URL, env?: Env): Promise<Offer[]> {
   let list = Array.from(mergedMap.values());
 
   if (geos.length) {
+    const includeEmptyGeo = /^(1|true|yes|on)$/i.test(url.searchParams.get("include_empty_geo") || "");
     const wanted = geos.map(g => g.toUpperCase());
-    list = list.filter(o => anyMatch(o.geo.map(g => g.toUpperCase()), wanted));
+    list = list.filter(o => {
+      const og = (o.geo || []).map(g => g.toUpperCase());
+      if (includeEmptyGeo && og.length === 0) return true;
+      return anyMatch(og, wanted);
+    });
   }
   if (devices.length) {
     const wanted = devices;
@@ -898,9 +1238,98 @@ export default {
     }
 
     try {
+      // Admin: refresh MyLead cache (protected by /offers/* auth)
+      if (req.method === "POST" && pathname === "/offers/admin/refresh/mylead") {
+        const url = new URL(req.url);
+        const max = Math.min(200, Number(url.searchParams.get("max") || 100));
+        const params = { geos: [], devices: [], ctypes: [], max };
+        ctx.waitUntil(myleadOffers(params, env, { force: true }).then(() => undefined));
+        return new Response(JSON.stringify({ status: "accepted", action: "refresh_mylead", max }), {
+          status: 202,
+          headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
+        });
+      }
+      // Admin: refresh MaxBounty login token
+      if (req.method === "POST" && pathname === "/offers/admin/auth/maxbounty/refresh-token") {
+        const token = await refreshMaxBountyToken(env);
+        if (!token) {
+          return new Response(JSON.stringify({ status: "error", error: "Unable to fetch token (check credentials)" }), {
+            status: 500,
+            headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
+          });
+        }
+        return new Response(JSON.stringify({ status: "ok", token_prefix: token.slice(0, 12) + "…" }), {
+          headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
+        });
+      }
+      // Admin: refresh MaxBounty offers cache (best-effort)
+      if (req.method === "POST" && pathname === "/offers/admin/refresh/maxbounty") {
+        const url = new URL(req.url);
+        const max = Math.min(200, Number(url.searchParams.get("max") || 100));
+        const params = { geos: [], devices: [], ctypes: [], max };
+        ctx.waitUntil(maxbountyOffers(params, env).then(() => undefined));
+        return new Response(JSON.stringify({ status: "accepted", action: "refresh_maxbounty", max }), {
+          status: 202,
+          headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
+        });
+      }
+      // Admin: refresh MyLead login token (using MYLEAD_USERNAME/MYLEAD_PASSWORD secrets)
+      if (req.method === "POST" && pathname === "/offers/admin/auth/mylead/refresh-token") {
+        const token = await refreshMyleadToken(env);
+        if (!token) {
+          return new Response(JSON.stringify({ status: "error", error: "Unable to fetch token (check base/credentials)" }), {
+            status: 500,
+            headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
+          });
+        }
+        return new Response(JSON.stringify({ status: "ok", token_prefix: token.slice(0, 12) + "…" }), {
+          headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
+        });
+      }
       // ---------- Public Vault (no API key required) ----------
       if (req.method === "GET" && pathname === "/vault") {
         return serveVault(originHdr);
+      }
+
+      // Admin: refresh CPAGrip offers (protected)
+      if (req.method === "POST" && pathname === "/offers/admin/refresh/cpagrip") {
+        const url = new URL(req.url);
+        const max = Math.min(200, Number(url.searchParams.get("max") || 100));
+        const params = { geos: [], devices: [], ctypes: [], max };
+        try { await env.REGISTRY?.delete?.('offers:cpagrip'); } catch {}
+        ctx.waitUntil(cpagripOffers(params, env).then(() => undefined));
+        return new Response(JSON.stringify({ status: "accepted", action: "refresh_cpagrip", max }), {
+          status: 202,
+          headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
+        });
+      }
+
+      // Admin: refresh OGAds offers (protected)
+      if (req.method === "POST" && pathname === "/offers/admin/refresh/ogads") {
+        const url = new URL(req.url);
+        const max = Math.min(200, Number(url.searchParams.get("max") || 100));
+        const params = { geos: [], devices: [], ctypes: [], max };
+        try { await env.REGISTRY?.delete?.('offers:ogads'); } catch {}
+        ctx.waitUntil(ogadsOffers(params, env).then(() => undefined));
+        return new Response(JSON.stringify({ status: "accepted", action: "refresh_ogads", max }), {
+          status: 202,
+          headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
+        });
+      }
+
+      // Admin: debug adapters (normalized view)
+      if (req.method === "GET" && pathname.startsWith("/offers/admin/debug/")) {
+        const net = pathname.split("/").pop()?.toLowerCase() || "";
+        const max = Math.min(200, Number(new URL(req.url).searchParams.get("max") || 50));
+        const params = { geos: [], devices: [], ctypes: [], max } as AdapterParams;
+        let items: Offer[] = [];
+        if (net === 'cpagrip') items = await cpagripOffers(params, env);
+        else if (net === 'ogads') items = await ogadsOffers(params, env, { req, url: new URL(req.url) });
+        else if (net === 'mylead') items = await myleadOffers(params, env, { force: true });
+        else if (net === 'maxbounty') items = await maxbountyOffers(params, env);
+        else return new Response(JSON.stringify({ error: 'unknown network' }), { status: 400, headers: { 'Content-Type': 'application/json', ...okCORS(originHdr) } });
+        const sample = items.slice(0, 10).map(o => ({ id: o.id, name: o.name, payout: o.payout, geo: o.geo, url: o.url }));
+        return new Response(JSON.stringify({ network: net, count: items.length, sample }), { headers: { 'Content-Type': 'application/json', ...okCORS(originHdr) } });
       }
       if (req.method === "GET" && pathname === "/vault/search") {
         return vaultSearch(req, originHdr);
@@ -929,7 +1358,7 @@ export default {
       if (req.method === "GET" && pathname === "/offers/search") {
         const url = new URL(req.url);
         // TODO: If you later fetch real upstreams, wrap with safeJson(...)
-        const offers = await handleSearch(url, env);
+  const offers = await handleSearch(url, env, req);
 
         // Split controls and modes
         const split = url.searchParams.get("split") === "true";
@@ -1162,7 +1591,7 @@ function serveVault(origin?: string) {
 
 async function vaultSearch(req: Request, origin?: string) {
   const url = new URL(req.url);
-  const offers = await handleSearch(url);
+  const offers = await handleSearch(url, undefined, req);
   const channel = url.searchParams.get("channel")?.trim();
   const reqAllowed = csv(url.searchParams.get("allowed_traffic"));
   if (channel) reqAllowed.push(channel.toLowerCase());
