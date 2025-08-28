@@ -25,6 +25,8 @@ export interface Env {
   NETWORKS_ENABLED?: string; // csv like "ogads,cpagrip,maxbounty,mylead"
   MAXBOUNTY_API_KEY?: string;
   MYLEAD_API_KEY?: string;
+  MYLEAD_BASE?: string; // optional override base URL
+  OFFERS_CACHE_TTL?: string; // ttl in seconds for upstream cache
 }
 
 type Offer = {
@@ -190,11 +192,28 @@ async function maxbountyOffers(params: AdapterParams, env?: Env): Promise<Offer[
 }
 
 async function myleadOffers(params: AdapterParams, env?: Env): Promise<Offer[]> {
-  const cached = await kvGetJSON<Offer[]>(env?.REGISTRY, 'offers:mylead');
-  if (Array.isArray(cached) && cached.length) return cached.slice(0, params.max).map(NormalizeNet('MyLead'));
+  const cacheKey = 'offers:mylead';
+  const cached = await kvGetJSON<Offer[]>(env?.REGISTRY, cacheKey);
+  if (Array.isArray(cached) && cached.length) return cached.slice(0, params.max);
   if (!env?.MYLEAD_API_KEY) return [];
-  // TODO: implement real fetch to MyLead API using env.MYLEAD_API_KEY (Bearer token likely)
-  return [];
+  const base = (env.MYLEAD_BASE || 'https://api.mylead.eu/api/external/v1/').replace(/\/$/, '/');
+  const q = new URL(base + 'offers');
+  // Attempt to request a larger page if supported; harmless if ignored by API.
+  q.searchParams.set('per_page', String(Math.min(100, Math.max(20, params.max || 20))));
+  try {
+    const res = await fetch(q.toString(), {
+      headers: { Authorization: `Bearer ${env.MYLEAD_API_KEY}`, Accept: 'application/json' }
+    });
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => ({}));
+    const arr: any[] = Array.isArray(data) ? data : (Array.isArray((data as any).data) ? (data as any).data : (Array.isArray((data as any).offers) ? (data as any).offers : []));
+    const normalized = arr.map(NormalizeNet('MyLead')).filter(o => o.url);
+    const ttl = Number(env?.OFFERS_CACHE_TTL || 900);
+    await kvPutJSON(env?.REGISTRY, cacheKey, normalized, ttl);
+    return normalized.slice(0, params.max);
+  } catch {
+    return [];
+  }
 }
 
 function NormalizeNet(networkName: string) {
