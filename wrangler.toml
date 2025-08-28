@@ -1,0 +1,86 @@
+name = "aiqbrain-offer-engine"
+main = "src/worker.ts"
+
+compatibility_date = "2025-08-01"
+
+compatibility_flags = ["nodejs_compat"]
+
+[build]
+tsconfig = "tsconfig.json"
+
+[observability]
+enabled = true
+
+
+# Also deploy to the workers.dev subdomain for testing and third‑party integrations
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+
+workers_dev = true
+
+# Run on colo(s) closest to where the data is used to reduce cold starts and latency
+[placement]
+mode = "smart"
+
+ # Note: health is served at /offers/health to avoid conflicts with other workers
+# Attach the Worker to your production domain routes
+routes = [
+  { pattern = "aiqbrain.com/offers/*", zone_name = "aiqbrain.com" },
+  { pattern = "aiqbrain.com/sv*",        zone_name = "aiqbrain.com" },
+  { pattern = "aiqbrain.com/sweeps*",    zone_name = "aiqbrain.com" },
+  { pattern = "aiqbrain.com/win500*",    zone_name = "aiqbrain.com" },
+  { pattern = "www.aiqbrain.com/offers/*", zone_name = "aiqbrain.com" },
+  { pattern = "www.aiqbrain.com/sv*",        zone_name = "aiqbrain.com" },
+  { pattern = "www.aiqbrain.com/sweeps*",    zone_name = "aiqbrain.com" },
+  { pattern = "www.aiqbrain.com/win500*",    zone_name = "aiqbrain.com" },
+  { pattern = "aiqbrain.com/favicon.ico",   zone_name = "aiqbrain.com" },
+  { pattern = "aiqbrain.com/favicon.svg",   zone_name = "aiqbrain.com" },
+  { pattern = "aiqbrain.com/logo.svg",      zone_name = "aiqbrain.com" },
+  { pattern = "www.aiqbrain.com/favicon.ico", zone_name = "aiqbrain.com" },
+  { pattern = "www.aiqbrain.com/favicon.svg", zone_name = "aiqbrain.com" },
+  { pattern = "www.aiqbrain.com/logo.svg",    zone_name = "aiqbrain.com" },
+  { pattern = "aiqbrain.com/openapi.json", zone_name = "aiqbrain.com" },
+  { pattern = "www.aiqbrain.com/openapi.json", zone_name = "aiqbrain.com" },
+  { pattern = "aiqbrain.com/openapi.yaml", zone_name = "aiqbrain.com" },
+  { pattern = "www.aiqbrain.com/openapi.yaml", zone_name = "aiqbrain.com" },
+  { pattern = "aiqbrain.com/.well-known/*", zone_name = "aiqbrain.com" },
+  { pattern = "www.aiqbrain.com/.well-known/*", zone_name = "aiqbrain.com" }
+]
+
+[vars]
+# NOTE: Do not put CPAGrip/OGAds secrets here — use `wrangler secret` (see bottom).
+# Safe non-secret fallbacks
+AIQ_API_KEYS = "aiq_dev_test_key_001"
+BASE_URL = "https://aiqbrain-offer-engine.jasonhslaughter.workers.dev"
+CORS_ALLOW_ORIGIN = "*"
+NETWORKS_ENABLED = "ogads,cpagrip"
+FALLBACK_ANDROID = "https://aiqengage.com/access"
+FALLBACK_IOS     = "https://singingfiles.com/show.php?l=0&u=2427730&id=69234&tracking_id="
+FALLBACK_GENERIC = "https://aiqengage.com/access"
+GREEN_MAX_MINUTES = "7"  # default threshold for 'GREEN' tier (videos ≤7 min)
+
+# KV namespaces (IDs from
+#   npx wrangler kv namespace create REGISTRY
+#   npx wrangler kv namespace create LOGS
+# )
+[[kv_namespaces]]
+binding = "REGISTRY"
+id = "d33cf5ce1d144d8784002ada07c3f69c"
+
+[[kv_namespaces]]
+binding = "LOGS"
+id = "7c3eb5b4694b46eb88099c6cc443d915"
+
+# Secrets (set these via Wrangler, not here):
+#   # CPAGrip (server-to-server, preferred)
+#   #   &key= uses your private API key for the private JSON feed.
+#   npx wrangler secret put CPAGRIP_SECRET_KEY
+#
+#   # CPAGrip (client-side JSON feed, optional — only if you plan to expose it)
+#   #   &pubkey= uses your *publisher id* (public), not the secret key.
+#   npx wrangler secret put CPAGRIP_PUBLISHER_ID
+#
+#   # OGAds (optional, only if "ogads" is enabled in NETWORKS_ENABLED)
+#   npx wrangler secret put OGADS_API_KEY
