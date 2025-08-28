@@ -8,14 +8,23 @@ type ExecutionCtx = {
   waitUntil(promise: Promise<any>): void;
   passThroughOnException(): void;
 };
+type KVNamespace = {
+  get(key: string, options?: any): Promise<string | null>;
+  put(key: string, value: string, options?: { expirationTtl?: number } & Record<string, any>): Promise<void>;
+};
 type ExportedHandlerShim<E = Env> = {
   fetch(request: Request, env: E, ctx: ExecutionCtx): Promise<Response>;
 };
 // src/worker.ts
 export interface Env {
   AIQ_API_KEYS?: string; // comma-separated list, e.g. "aiq_dev_test_key_001,another_key"
-  // (optional) KV for caching if you want later:
-  // AIQ_OFFERS_CACHE: KVNamespace;
+  // KV namespaces
+  REGISTRY?: KVNamespace;
+  LOGS?: KVNamespace;
+  // Network toggles and secrets (optional)
+  NETWORKS_ENABLED?: string; // csv like "ogads,cpagrip,maxbounty,mylead"
+  MAXBOUNTY_API_KEY?: string;
+  MYLEAD_API_KEY?: string;
 }
 
 type Offer = {
@@ -150,6 +159,65 @@ function scoreOffer(o: Offer, opts: { allowed: string[]; whaleThreshold?: number
   return (W.p*payout) + (W.e*epc) + (W.t*t) + (W.g*g) + (W.f*fb);
 }
 
+// ===== Upstream adapters (stubs) + KV caching =====
+async function kvGetJSON<T = any>(ns: KVNamespace | undefined, key: string): Promise<T | null> {
+  if (!ns) return null;
+  try {
+    const raw = await ns.get(key);
+    if (!raw) return null;
+    return JSON.parse(raw) as T;
+  } catch { return null; }
+}
+async function kvPutJSON(ns: KVNamespace | undefined, key: string, value: any, ttlSec?: number) {
+  if (!ns) return;
+  try {
+    const opts: any = {};
+    if (ttlSec && Number(ttlSec) > 0) opts.expirationTtl = Number(ttlSec);
+    await ns.put(key, JSON.stringify(value), opts);
+  } catch {}
+}
+
+type AdapterParams = { geos: string[]; devices: string[]; ctypes: string[]; max: number };
+
+async function maxbountyOffers(params: AdapterParams, env?: Env): Promise<Offer[]> {
+  // Stub: prefer cached KV; return [] if none or no secret.
+  // To enable: set MAXBOUNTY_API_KEY secret and write the fetch adapter; seed KV key 'offers:maxbounty'.
+  const cached = await kvGetJSON<Offer[]>(env?.REGISTRY, 'offers:maxbounty');
+  if (Array.isArray(cached) && cached.length) return cached.slice(0, params.max).map(NormalizeNet('MaxBounty'));
+  if (!env?.MAXBOUNTY_API_KEY) return [];
+  // TODO: implement real fetch to MaxBounty API using env.MAXBOUNTY_API_KEY
+  return [];
+}
+
+async function myleadOffers(params: AdapterParams, env?: Env): Promise<Offer[]> {
+  const cached = await kvGetJSON<Offer[]>(env?.REGISTRY, 'offers:mylead');
+  if (Array.isArray(cached) && cached.length) return cached.slice(0, params.max).map(NormalizeNet('MyLead'));
+  if (!env?.MYLEAD_API_KEY) return [];
+  // TODO: implement real fetch to MyLead API using env.MYLEAD_API_KEY (Bearer token likely)
+  return [];
+}
+
+function NormalizeNet(networkName: string) {
+  return (o: any): Offer => ({
+    id: o.id || o.offer_id || cryptoRandomId(),
+    name: o.name || o.title || '',
+    url: o.url || o.tracking_url || o.link || '',
+    network: o.network || networkName,
+    payout: o.payout ?? null,
+    epc: o.epc ?? null,
+    geo: Array.isArray(o.geo) ? o.geo : (o.geo ? [String(o.geo)] : []),
+    device: Array.isArray(o.device) ? o.device : (o.device ? [String(o.device)] : []),
+    vertical: o.vertical || o.category || null,
+    allowed_traffic: Array.isArray(o.allowed_traffic) ? o.allowed_traffic : (o.allowed_traffic ? [String(o.allowed_traffic)] : []),
+    friction_minutes: o.friction_minutes ?? null,
+    notes: o.notes || ''
+  });
+}
+function cryptoRandomId() {
+  // best-effort unique ID when upstream lacks one
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
 function splitOffers(
   offers: Offer[],
   reqAllowed: string[],
@@ -244,7 +312,11 @@ function matchKeywords(o: Offer, keywordsCsv?: string | null) {
   return kw.some(k => hay.includes(k));
 }
 
-async function handleSearch(url: URL): Promise<Offer[]> {
+async function handleSearch(url: URL, env?: Env): Promise<Offer[]> {
+  // Prepare requested filters for potential upstream adapters
+  const reqGeos = csv(url.searchParams.get("geo"));
+  const reqDevices = csv(url.searchParams.get("device"));
+  const reqCtypes = csv(url.searchParams.get("ctype"));
   // Use curated registry merged with fallbacks, then filter by query.
   const geos = csv(url.searchParams.get("geo"));
   const devices = csv(url.searchParams.get("device"));
@@ -258,9 +330,22 @@ async function handleSearch(url: URL): Promise<Offer[]> {
   const minPayout = Number(url.searchParams.get("min_payout") ?? url.searchParams.get("payout_min") ?? 0);
 
   const registryOffers: RegOffer[] = Array.isArray((REGISTRY as any)?.offers) ? (REGISTRY as any).offers : [];
+  // Optionally include cached upstream offers (e.g., maxbounty, mylead) if enabled
+  let external: Offer[] = [];
+  try {
+    const enabled = new Set(csv(env?.NETWORKS_ENABLED || ""));
+    if (enabled.has("maxbounty")) {
+      const mb = await maxbountyOffers({ geos: reqGeos, devices: reqDevices, ctypes: reqCtypes, max }, env);
+      external = external.concat(mb);
+    }
+    if (enabled.has("mylead")) {
+      const ml = await myleadOffers({ geos: reqGeos, devices: reqDevices, ctypes: reqCtypes, max }, env);
+      external = external.concat(ml);
+    }
+  } catch {}
   // Merge by URL to avoid duplicates; prefer registry data over fallbacks
   const mergedMap = new Map<string, Offer>();
-  for (const src of [...registryOffers, ...FALLBACK_OFFERS]) {
+  for (const src of [...external, ...registryOffers, ...FALLBACK_OFFERS]) {
     const key = (src.url || "") as string;
     if (!key) continue;
     if (!mergedMap.has(key)) mergedMap.set(key, src as Offer);
@@ -825,7 +910,7 @@ export default {
       if (req.method === "GET" && pathname === "/offers/search") {
         const url = new URL(req.url);
         // TODO: If you later fetch real upstreams, wrap with safeJson(...)
-        const offers = await handleSearch(url);
+        const offers = await handleSearch(url, env);
 
         // Split controls and modes
         const split = url.searchParams.get("split") === "true";
