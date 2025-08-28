@@ -57,6 +57,13 @@ Cloudflare Worker that searches curated CPA/CPI offers and serves an OpenAPI spe
   - `traffic` (default): GREEN/YELLOW by `allowed_traffic` and `friction_max` (default 7 when split=true).
   - `payout`: WHALES (payout >= $10) vs MINNOWS (< $10), both ranked by `_score`.
 
+### Advanced Tuning
+
+- Whale threshold:
+  - Flat and traffic split can filter to offers with payout >= threshold when provided.
+  - Payout split uses the same threshold to group whales/minnows.
+  - Example: `curl -sS -G -H "X-Api-Key: $AIQB_KEY" "$BASE/offers/search" --data-urlencode 'ctype=*' --data-urlencode 'whale_threshold=5' | jq '.offers | length'`
+
 ### Notes
 
 - The AI plugin manifest is served from the Worker at `/.well-known/ai-plugin.json` (auth: user_http bearer). The static copy in `public/.well-known` has been removed to keep one source of truth.
