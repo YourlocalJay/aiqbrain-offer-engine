@@ -19,35 +19,10 @@ binding = "ASSETS"
 [placement]
 mode = "smart"
 
- # Note: health is served at /offers/health to avoid conflicts with other workers
-# Attach the Worker to your production domain routes
-routes = [
-  { pattern = "aiqbrain.com/offers/*", zone_name = "aiqbrain.com" },
-  { pattern = "aiqbrain.com/sv*",        zone_name = "aiqbrain.com" },
-  { pattern = "aiqbrain.com/sweeps*",    zone_name = "aiqbrain.com" },
-  { pattern = "aiqbrain.com/win500*",    zone_name = "aiqbrain.com" },
-  { pattern = "www.aiqbrain.com/offers/*", zone_name = "aiqbrain.com" },
-  { pattern = "www.aiqbrain.com/sv*",        zone_name = "aiqbrain.com" },
-  { pattern = "www.aiqbrain.com/sweeps*",    zone_name = "aiqbrain.com" },
-  { pattern = "www.aiqbrain.com/win500*",    zone_name = "aiqbrain.com" },
-  { pattern = "aiqbrain.com/favicon.ico",   zone_name = "aiqbrain.com" },
-  { pattern = "aiqbrain.com/favicon.svg",   zone_name = "aiqbrain.com" },
-  { pattern = "aiqbrain.com/logo.svg",      zone_name = "aiqbrain.com" },
-  { pattern = "www.aiqbrain.com/favicon.ico", zone_name = "aiqbrain.com" },
-  { pattern = "www.aiqbrain.com/favicon.svg", zone_name = "aiqbrain.com" },
-  { pattern = "www.aiqbrain.com/logo.svg",    zone_name = "aiqbrain.com" },
-  { pattern = "aiqbrain.com/openapi.json", zone_name = "aiqbrain.com" },
-  { pattern = "www.aiqbrain.com/openapi.json", zone_name = "aiqbrain.com" },
-  { pattern = "aiqbrain.com/openapi.yaml", zone_name = "aiqbrain.com" },
-  { pattern = "www.aiqbrain.com/openapi.yaml", zone_name = "aiqbrain.com" },
-  { pattern = "aiqbrain.com/.well-known/*", zone_name = "aiqbrain.com" },
-  { pattern = "www.aiqbrain.com/.well-known/*", zone_name = "aiqbrain.com" }
-]
 
 [vars]
 # NOTE: Do not put CPAGrip/OGAds secrets here — use `wrangler secret` (see bottom).
-# Safe non-secret fallbacks
-AIQ_API_KEYS = "aiq_dev_test_key_001"
+# Safe non-secret fallbacks (API keys are set via `wrangler secret`)
 BASE_URL = "https://aiqbrain-offer-engine.jasonhslaughter.workers.dev"
 CORS_ALLOW_ORIGIN = "*"
 NETWORKS_ENABLED = "ogads,cpagrip"
