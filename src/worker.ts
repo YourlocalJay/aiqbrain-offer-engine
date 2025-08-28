@@ -1331,6 +1331,88 @@ export default {
         const sample = items.slice(0, 10).map(o => ({ id: o.id, name: o.name, payout: o.payout, geo: o.geo, url: o.url }));
         return new Response(JSON.stringify({ network: net, count: items.length, sample }), { headers: { 'Content-Type': 'application/json', ...okCORS(originHdr) } });
       }
+
+      // Admin: trait inspector GUI (HTML)
+      if (req.method === "GET" && pathname === "/offers/admin/inspector") {
+        return serveInspector(originHdr);
+      }
+
+      // Admin: trait inspector API (JSON)
+      if ((req.method === "POST" || req.method === "GET") && pathname === "/offers/admin/inspect") {
+        try {
+          const url = new URL(req.url);
+          let body: any = {};
+          if (req.method === 'POST') {
+            try { body = await req.json(); } catch { body = {}; }
+          } else {
+            // Map query params to body shape
+            body = {
+              ids: (url.searchParams.get('ids') || ''),
+              site: url.searchParams.get('site') || '',
+              network: url.searchParams.get('network') || '',
+              keywords: url.searchParams.get('keywords') || '',
+              allowed_traffic: url.searchParams.get('allowed_traffic') || '',
+              channel: url.searchParams.get('channel') || '',
+              min_payout: url.searchParams.get('min_payout') || url.searchParams.get('payout_min') || '0',
+              friction_max: url.searchParams.get('friction_max') || '',
+              whale_threshold: url.searchParams.get('whale_threshold') || ''
+            };
+          }
+          // Build a synthetic search URL to reuse handleSearch
+          const q = new URL('https://local/offers/search');
+          if (body.network) q.searchParams.set('network', String(body.network));
+          if (body.keywords) q.searchParams.set('keywords', String(body.keywords));
+          if (body.min_payout) q.searchParams.set('min_payout', String(body.min_payout));
+          if (body.allowed_traffic) q.searchParams.set('allowed_traffic', String(body.allowed_traffic));
+          if (body.channel) q.searchParams.set('channel', String(body.channel));
+          q.searchParams.set('max', String(Math.min(200, Number(body.max || 100))));
+
+          const offers = await handleSearch(q, env, req);
+          const ids = String(body.ids || '').split(/[\s,]+/).map((s: string) => s.trim()).filter(Boolean);
+          const site = String(body.site || '').trim().toLowerCase();
+
+          let filtered = offers;
+          if (ids.length) {
+            const set = new Set(ids.map((s: string) => s.toLowerCase()));
+            filtered = filtered.filter(o => set.has((o.id || '').toLowerCase()));
+          }
+          if (site) {
+            filtered = filtered.filter(o => (o.url || '').toLowerCase().includes(site));
+          }
+
+          const allowed = csv(body.allowed_traffic || '');
+          if (body.channel) allowed.push(String(body.channel).toLowerCase());
+          const whaleThreshold = Number(body.whale_threshold || 10);
+          const scored = filtered.map(o => ({ ...o, _score: scoreOffer(o, { allowed, whaleThreshold }) }))
+                                 .sort((a,b) => (b._score ?? 0) - (a._score ?? 0));
+
+          const payload = {
+            meta: {
+              ids,
+              site,
+              network: body.network || '',
+              keywords: body.keywords || '',
+              allowed_traffic: allowed,
+              channel: body.channel || '',
+              min_payout: Number(body.min_payout || 0),
+              whale_threshold: Number.isFinite(whaleThreshold) ? whaleThreshold : 10,
+              total_examined: offers.length,
+              total_matched: scored.length
+            },
+            items: scored
+          };
+
+          // Fire-and-forget log to KV
+          try {
+            const key = `log:traits:${Date.now()}:${Math.random().toString(36).slice(2,8)}`;
+            ctx.waitUntil(kvPutJSON(env.LOGS, key, payload));
+          } catch {}
+
+          return new Response(JSON.stringify(payload), { headers: { 'Content-Type': 'application/json', ...okCORS(originHdr) } });
+        } catch (e: any) {
+          return new Response(JSON.stringify({ error: 'inspect_error', message: e?.message || String(e) }), { status: 500, headers: { 'Content-Type': 'application/json', ...okCORS(originHdr) } });
+        }
+      }
       if (req.method === "GET" && pathname === "/vault/search") {
         return vaultSearch(req, originHdr);
       }
@@ -1633,4 +1715,178 @@ async function vaultSearch(req: Request, origin?: string) {
     `;
   }
   return new Response(VAULT_HTML(body), { headers: { "Content-Type": "text/html; charset=utf-8", ...okCORS(origin) } });
+}
+
+// ===== Admin: Traits Inspector (HTML) =====
+function INSPECTOR_HTML(body: string) {
+  return `<!doctype html>
+<html lang="en"><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Traits Inspector</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px}
+  .wrap{max-width:1100px;margin:0 auto}
+  input,textarea,select{padding:6px 8px;margin:4px;width:100%;box-sizing:border-box}
+  label{font-weight:600;margin-top:8px;display:block}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .btn{padding:8px 12px;margin:8px 0;cursor:pointer}
+  table{border-collapse:collapse;width:100%;margin-top:16px}
+  th,td{border:1px solid #ddd;padding:8px;font-size:14px}
+  th{background:#f5f5f5;text-align:left}
+  .muted{color:#666}
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .controls{background:#fafafa;border:1px solid #eee;padding:12px;border-radius:8px}
+  .err{color:#b00}
+  .ok{color:#060}
+  .pill{display:inline-block;background:#eef;padding:2px 6px;border-radius:10px;font-size:12px;margin-left:8px}
+  .hint{font-size:12px;color:#666;margin-left:8px}
+  .nowrap{white-space:nowrap}
+  .sm{font-size:12px;color:#666}
+  .right{text-align:right}
+  .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+  .flex{display:flex;gap:12px;align-items:center}
+  .flex>*{flex:1}
+  .w-33{flex:0 0 33%}
+  .w-50{flex:0 0 50%}
+  .w-25{flex:0 0 25%}
+  .my8{margin:8px 0}
+  .mt16{margin-top:16px}
+  .mb8{margin-bottom:8px}
+  .center{text-align:center}
+  .hidden{display:none}
+  .badge{background:#eee;border-radius:6px;padding:2px 6px;font-size:12px;margin-left:6px}
+  .head{display:flex;justify-content:space-between;align-items:center}
+  .head h1{margin:0}
+  .head .links a{margin-left:12px}
+  .kvs{font-size:12px;color:#666}
+  .s{font-size:12px}
+  .nowrap{white-space:nowrap}
+  .score{font-weight:700}
+  .green{color:#0a0}
+  .yellow{color:#aa0}
+  .net{font-weight:600}
+  .id{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:12px}
+  .url{max-width:380px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tbl-wrap{overflow:auto}
+  .topline{font-size:13px;color:#444}
+  .topline code{background:#f5f5f5;border:1px solid #eee;padding:1px 4px;border-radius:4px}
+  .small{font-size:12px;color:#555}
+  .sep{height:1px;background:#eee;margin:12px 0}
+  .caps{font-size:12px;color:#666;text-transform:uppercase;letter-spacing:.08em}
+  .toolbar{display:flex;gap:8px;align-items:center}
+  .toolbar .btn{margin:0}
+  .spacer{flex:1}
+  .note{font-size:12px;color:#666}
+  .shadow{box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .card{background:#fff;border:1px solid #eee;border-radius:8px;padding:12px}
+  .mono-sm{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px}
+  .tag{display:inline-block;border:1px solid #ddd;border-radius:12px;padding:0 8px;line-height:20px;font-size:12px;background:#fafafa;margin-right:6px}
+  .counts{font-size:12px;color:#444}
+  .counts b{font-weight:700}
+  .nowrap{white-space:nowrap}
+  .right{ text-align:right }
+  .fit{ width:1%; white-space:nowrap }
+  .tight td{padding:6px}
+  .tight th{padding:6px}
+</style>
+<div class="wrap">
+  <div class="head">
+    <h1>Traits Inspector <span class="pill">beta</span></h1>
+    <div class="links small"><a href="/vault/search">Offer Vault</a> · <a href="/openapi.json">OpenAPI</a></div>
+  </div>
+  <p class="topline">Paste deal traits to locate and rank offers. Provide IDs and/or a site substring. Results are logged for assessment.</p>
+  <div class="controls card shadow">
+    <div class="row">
+      <div>
+        <label>Deal IDs (CSV or whitespace)</label>
+        <textarea id="ids" rows="3" placeholder="id1, id2, id3..."></textarea>
+      </div>
+      <div>
+        <label>Site contains</label>
+        <input id="site" placeholder="example.com, unlockcontent.net, ..."/>
+        <div class="note">Matches inside the offer tracking URL.</div>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Networks</label>
+        <input id="network" placeholder="ogads,cpagrip,mylead,maxbounty"/>
+      </div>
+      <div>
+        <label>Keywords (search in name/vertical)</label>
+        <input id="keywords" placeholder="gift card, sweeps, PIN"/>
+      </div>
+    </div>
+    <div class="grid-4">
+      <div>
+        <label>Allowed Traffic</label>
+        <input id="allowed_traffic" placeholder="Reddit,TikTok,Pinterest"/>
+      </div>
+      <div>
+        <label>Channel (alias for single allowed_traffic)</label>
+        <input id="channel" placeholder="reddit"/>
+      </div>
+      <div>
+        <label>Min Payout</label>
+        <input id="min_payout" type="number" min="0" step="0.01" value="0"/>
+      </div>
+      <div>
+        <label>Whale Threshold</label>
+        <input id="whale_threshold" type="number" min="0" step="0.01" value="10"/>
+      </div>
+    </div>
+    <div class="toolbar mt16">
+      <button class="btn" id="runBtn">Search & Rank</button>
+      <div class="spacer"></div>
+      <div id="status" class="small"></div>
+    </div>
+  </div>
+
+  <div id="out" class="mt16"></div>
+</div>
+<script>
+async function runInspect(){
+  const q = {
+    ids: document.getElementById('ids').value,
+    site: document.getElementById('site').value,
+    network: document.getElementById('network').value,
+    keywords: document.getElementById('keywords').value,
+    allowed_traffic: document.getElementById('allowed_traffic').value,
+    channel: document.getElementById('channel').value,
+    min_payout: document.getElementById('min_payout').value,
+    whale_threshold: document.getElementById('whale_threshold').value
+  };
+  const statusEl = document.getElementById('status');
+  statusEl.textContent = 'Running...';
+  try{
+    const res = await fetch('/offers/admin/inspect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(q)});
+    const data = await res.json();
+    statusEl.textContent = res.ok ? 'OK' : ('Error: ' + (data && data.message || res.status));
+    if(!res.ok){ document.getElementById('out').innerHTML = '<p class="err">'+(data.message||'Error')+'</p>'; return; }
+    const items = data.items||[];
+    const head = `<div class="counts">Matched <b>${data.meta.total_matched}</b> of <b>${data.meta.total_examined}</b> examined · Network: <code class="mono-sm">${data.meta.network||'*'}</code> · Allowed: <code class="mono-sm">${(data.meta.allowed_traffic||[]).join(', ')||'*'}</code></div>`;
+    const rows = items.map(o=>`<tr>
+      <td class="id">${o.id||''}</td>
+      <td class="net">${o.network||''}</td>
+      <td class="right fit">${o.payout!=null?o.payout:''}</td>
+      <td class="right fit score">${(o._score||0).toFixed(3)}</td>
+      <td class="url"><a href="${o.url}" target="_blank" rel="noopener">${o.url}</a></td>
+      <td class="fit">${(o.geo||[]).join(',')}</td>
+      <td class="fit">${(o.device||[]).join(',')}</td>
+      <td class="fit">${o.friction_minutes??''}</td>
+    </tr>`).join('');
+    const table = `<div class="tbl-wrap"><table class="tight"><thead><tr>
+      <th>Offer ID</th><th>Net</th><th class="right fit">Payout</th><th class="right fit">Score</th><th>URL</th><th class="fit">Geo</th><th class="fit">Device</th><th class="fit">Friction</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+    document.getElementById('out').innerHTML = `<div class="card shadow">${head}${table}</div>`;
+  }catch(e){ statusEl.textContent = 'Error'; document.getElementById('out').innerHTML = '<p class="err">'+e+'</p>'; }
+}
+document.getElementById('runBtn').addEventListener('click', (e)=>{ e.preventDefault(); runInspect(); });
+</script>
+</html>`;
+}
+
+function serveInspector(origin?: string){
+  return new Response(INSPECTOR_HTML(''), { headers: { 'Content-Type': 'text/html; charset=utf-8', ...okCORS(origin) } });
 }
