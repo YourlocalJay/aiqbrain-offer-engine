@@ -44,6 +44,18 @@ Cloudflare Worker that searches curated CPA/CPI offers and serves an OpenAPI spe
   - Payout (WHALES/MINNOWS; threshold $10):
     - `curl -sS -G -H "X-Api-Key: $AIQB_KEY" "$BASE/offers/search" --data-urlencode 'split=true' --data-urlencode 'split_mode=payout' | jq '{counts, whales0: (.whales[0]//null), minnows0: (.minnows[0]//null)}'`
 
+### Parameters and Tips
+
+- `geo`: CSV of ISO country codes, e.g. `US,CA,UK,AU,DE,FR`.
+- `device`: CSV of `mobile` and/or `desktop`.
+- `ctype`: CSV tokens or `*` to disable. Common tokens include `CPA`, `CPI`, `SOI`, `DOI`, `Trial`, `Deposit`, and vertical hints like `finance`, `casino`, `nutra`.
+- `network`: CSV of network slugs, e.g. `ogads,cpagrip,...`.
+- `allowed_traffic`: CSV; `channel` is a single-value alias and auto-deduped into `allowed_traffic`.
+- `min_payout`: Filters out lower payouts. Whales/minnows split uses $10 threshold.
+- `split_mode`:
+  - `traffic` (default): GREEN/YELLOW by `allowed_traffic` and `friction_max` (default 7 when split=true).
+  - `payout`: WHALES (payout >= $10) vs MINNOWS (< $10), both ranked by `_score`.
+
 ### Notes
 
 - The AI plugin manifest is served from the Worker at `/.well-known/ai-plugin.json` (auth: user_http bearer). The static copy in `public/.well-known` has been removed to keep one source of truth.
