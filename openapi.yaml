@@ -1,0 +1,244 @@
+openapi: 3.1.0
+info:
+  title: AIQBrain Offer Engine
+  version: 1.0.2
+  description: Search curated CPA/CPI offers.
+servers:
+  - url: https://aiqbrain-offer-engine.jasonhslaughter.workers.dev
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+  schemas:
+    Offer:
+      type: object
+      required:
+        [id, name, url, network, payout, geo, device, vertical, allowed_traffic, friction_minutes]
+      properties:
+        id:               { type: string }
+        name:             { type: string }
+        url:              { type: string }
+        network:          { type: string }
+        payout:           { type: number }
+        epc:              { type: number, nullable: true }
+        geo:              { type: array, items: { type: string } }
+        device:           { type: array, items: { type: string } }
+        vertical:         { type: string }
+        allowed_traffic:  { type: array, items: { type: string } }
+        friction_minutes: { type: integer }
+        notes:            { type: string }
+        _score:           { type: number }
+        tier:              { type: string, enum: [green, yellow], description: "Present only when split=true" }
+
+    SearchResponse:
+      type: object
+      required: [offers]
+      properties:
+        offers:
+          type: array
+          items: { $ref: "#/components/schemas/Offer" }
+
+    SplitCounts:
+      type: object
+      properties:
+        green: { type: integer }
+        yellow: { type: integer }
+        total: { type: integer }
+
+    SplitRules:
+      type: object
+      properties:
+        min_payout: { type: number, default: 2.0 }
+        friction_max: { type: integer, default: 6 }
+        allowed_traffic_mode:
+          type: string
+          enum: [all, any]
+          default: all
+
+    SplitSearchResponse:
+      type: object
+      required: [green, yellow, counts, rules]
+      properties:
+        green:
+          type: array
+          items: { $ref: "#/components/schemas/Offer" }
+        yellow:
+          type: array
+          items: { $ref: "#/components/schemas/Offer" }
+        counts:
+          $ref: "#/components/schemas/SplitCounts"
+        rules:
+          $ref: "#/components/schemas/SplitRules"
+        meta:
+          type: object
+          description: Optional metadata about the request and split evaluation
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+    ServerError:
+      description: Server error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+paths:
+  /offers/health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: OK
+          content:
+            text/plain:
+              schema: { type: string, example: ok }
+  /offers/search:
+    get:
+      operationId: searchOffers
+      security: [ { ApiKeyAuth: [] } ]
+      parameters:
+        - in: query
+          name: geo
+          required: true
+          schema: { type: string, example: US }
+        - in: query
+          name: device
+          required: true
+          schema: { type: string, example: mobile, enum: [mobile, desktop, any], default: mobile }
+        - in: query
+          name: ctype
+          required: true
+          schema: { type: string, example: "CPA+PIN" }
+        - in: query
+          name: network
+          schema: { type: string, example: "ogads,cpagrip" }
+        - in: query
+          name: max
+          schema: { type: integer, default: 20, maximum: 50 }
+        - in: query
+          name: min_payout
+          schema: { type: number, description: "Minimum payout for Green tier (used when split=true)" }
+        - in: query
+          name: allowed_traffic
+          schema: { type: string, example: "Reddit,TikTok,Pinterest" }
+        - in: query
+          name: split
+          schema: { type: boolean, default: false, description: "Return Green/Yellow buckets when true" }
+        - in: query
+          name: payout_min
+          schema: { type: number, default: 2.0, deprecated: true, description: "Deprecated: use min_payout instead" }
+        - in: query
+          name: friction_max
+          schema: { type: integer, default: 6, description: "Max minutes to complete flow for Green tier (used when split=true)" }
+        - in: query
+          name: allowed_traffic_mode
+          schema:
+            type: string
+            enum: [all, any]
+            default: all
+            description: "When set to 'all', offers must allow all requested traffic sources; 'any' allows any one"
+      responses:
+        "200":
+          description: Array of offers
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/SearchResponse"
+                  - $ref: "#/components/schemas/SplitSearchResponse"
+              examples:
+                flat:
+                  summary: Flat list (split=false)
+                  value:
+                    offers:
+                      - id: "ogads_us_android_68831"
+                        name: "US Android — $750 Gift Card (OGAds)"
+                        url: "https://singingfiles.com/show.php?l=0&amp;u=2427730&amp;id=68831&amp;tracking_id="
+                        network: "OGAds"
+                        payout: 2.1
+                        epc: null
+                        geo: ["US"]
+                        device: ["mobile"]
+                        vertical: "sweeps"
+                        allowed_traffic: ["Reddit", "TikTok", "Pinterest"]
+                        friction_minutes: 5
+                        notes: "Android-first US gift-card path; fast flow"
+                        _score: 15.1
+                      - id: "ogads_us_ios_69234"
+                        name: "US iOS — $750 Gift Card (OGAds)"
+                        url: "https://singingfiles.com/show.php?l=0&amp;u=2427730&amp;id=69234&amp;tracking_id="
+                        network: "OGAds"
+                        payout: 2.1
+                        epc: null
+                        geo: ["US"]
+                        device: ["mobile"]
+                        vertical: "sweeps"
+                        allowed_traffic: ["Reddit", "TikTok", "Pinterest"]
+                        friction_minutes: 5
+                        notes: "iOS-optimized US gift-card path"
+                        _score: 15.1
+                      - id: "cpagrip_us_giftcard_a1"
+                        name: "US Gift Card — Mobile (CPAGrip)"
+                        url: "https://aiqbrain-offer-engine.jasonhslaughter.workers.dev/offers/redirect?offer_id=cpagrip_us_giftcard_a1&amp;tracking_id="
+                        network: "CPAGrip"
+                        payout: 1.8
+                        epc: null
+                        geo: ["US"]
+                        device: ["mobile"]
+                        vertical: "sweeps"
+                        allowed_traffic: ["Reddit", "Pinterest"]
+                        friction_minutes: 6
+                        notes: "Short flow; good weekend volume"
+                        _score: 13.8
+                split:
+                  summary: Split buckets (split=true)
+                  value:
+                    green:
+                      - id: "ogads_us_android_68831"
+                        name: "US Android — $750 Gift Card (OGAds)"
+                        url: "https://singingfiles.com/show.php?l=0&amp;u=2427730&amp;id=68831&amp;tracking_id="
+                        network: "OGAds"
+                        payout: 2.1
+                        epc: null
+                        geo: ["US"]
+                        device: ["mobile"]
+                        vertical: "sweeps"
+                        allowed_traffic: ["Reddit", "TikTok", "Pinterest"]
+                        friction_minutes: 5
+                        notes: "Android-first US gift-card path; fast flow"
+                        _score: 15.1
+                        tier: "green"
+                    yellow:
+                      - id: "cpagrip_us_giftcard_a1"
+                        name: "US Gift Card — Mobile (CPAGrip)"
+                        url: "https://aiqbrain-offer-engine.jasonhslaughter.workers.dev/offers/redirect?offer_id=cpagrip_us_giftcard_a1&amp;tracking_id="
+                        network: "CPAGrip"
+                        payout: 1.8
+                        epc: null
+                        geo: ["US"]
+                        device: ["mobile"]
+                        vertical: "sweeps"
+                        allowed_traffic: ["Reddit", "Pinterest"]
+                        friction_minutes: 6
+                        notes: "Short flow; good weekend volume"
+                        _score: 13.8
+                        tier: "yellow"
+                    counts: { green: 1, yellow: 1, total: 2 }
+                    rules: { min_payout: 2.0, friction_max: 6, allowed_traffic_mode: "all" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        default:
+          $ref: "#/components/responses/ServerError"
