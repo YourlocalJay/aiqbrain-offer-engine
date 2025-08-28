@@ -64,6 +64,14 @@ Cloudflare Worker that searches curated CPA/CPI offers and serves an OpenAPI spe
   - Payout split uses the same threshold to group whales/minnows.
   - Example: `curl -sS -G -H "X-Api-Key: $AIQB_KEY" "$BASE/offers/search" --data-urlencode 'ctype=*' --data-urlencode 'whale_threshold=5' | jq '.offers | length'`
 
+- Traffic mode logic:
+  - `allowed_traffic_mode=all|any` controls whether all requested channels must be allowed (default all) or any one is sufficient.
+  - Example (allow any): `--data-urlencode 'allowed_traffic=Reddit,TikTok' --data-urlencode 'allowed_traffic_mode=any'`
+
+- Friction threshold:
+  - When `split=true` and `split_mode=traffic`, GREEN tier uses `friction_max` (default 7).
+  - Example (stricter): `--data-urlencode 'split=true' --data-urlencode 'split_mode=traffic' --data-urlencode 'friction_max=5'`
+
 ### Notes
 
 - The AI plugin manifest is served from the Worker at `/.well-known/ai-plugin.json` (auth: user_http bearer). The static copy in `public/.well-known` has been removed to keep one source of truth.
