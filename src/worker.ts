@@ -1865,21 +1865,21 @@ async function runInspect(){
     statusEl.textContent = res.ok ? 'OK' : ('Error: ' + (data && data.message || res.status));
     if(!res.ok){ document.getElementById('out').innerHTML = '<p class="err">'+(data.message||'Error')+'</p>'; return; }
     const items = data.items||[];
-    const head = `<div class="counts">Matched <b>${data.meta.total_matched}</b> of <b>${data.meta.total_examined}</b> examined · Network: <code class="mono-sm">${data.meta.network||'*'}</code> · Allowed: <code class="mono-sm">${(data.meta.allowed_traffic||[]).join(', ')||'*'}</code></div>`;
-    const rows = items.map(o=>`<tr>
-      <td class="id">${o.id||''}</td>
-      <td class="net">${o.network||''}</td>
-      <td class="right fit">${o.payout!=null?o.payout:''}</td>
-      <td class="right fit score">${(o._score||0).toFixed(3)}</td>
-      <td class="url"><a href="${o.url}" target="_blank" rel="noopener">${o.url}</a></td>
-      <td class="fit">${(o.geo||[]).join(',')}</td>
-      <td class="fit">${(o.device||[]).join(',')}</td>
-      <td class="fit">${o.friction_minutes??''}</td>
-    </tr>`).join('');
-    const table = `<div class="tbl-wrap"><table class="tight"><thead><tr>
-      <th>Offer ID</th><th>Net</th><th class="right fit">Payout</th><th class="right fit">Score</th><th>URL</th><th class="fit">Geo</th><th class="fit">Device</th><th class="fit">Friction</th>
-    </tr></thead><tbody>${rows}</tbody></table></div>`;
-    document.getElementById('out').innerHTML = `<div class="card shadow">${head}${table}</div>`;
+    const head = \`<div class=\"counts\">Matched <b>\${data.meta.total_matched}</b> of <b>\${data.meta.total_examined}</b> examined · Network: <code class=\"mono-sm\">\${data.meta.network||'*'}</code> · Allowed: <code class=\"mono-sm\">\${(data.meta.allowed_traffic||[]).join(', ')||'*'}</code></div>\`;
+    const rows = items.map(o=>\`<tr>
+      <td class=\"id\">\${o.id||''}</td>
+      <td class=\"net\">\${o.network||''}</td>
+      <td class=\"right fit\">\${o.payout!=null?o.payout:''}</td>
+      <td class=\"right fit score\">\${(o._score||0).toFixed(3)}</td>
+      <td class=\"url\"><a href=\"\${o.url}\" target=\"_blank\" rel=\"noopener\">\${o.url}</a></td>
+      <td class=\"fit\">\${(o.geo||[]).join(',')}</td>
+      <td class=\"fit\">\${(o.device||[]).join(',')}</td>
+      <td class=\"fit\">\${o.friction_minutes??''}</td>
+    </tr>\`).join('');
+    const table = \`<div class=\"tbl-wrap\"><table class=\"tight\"><thead><tr>
+      <th>Offer ID</th><th>Net</th><th class=\"right fit\">Payout</th><th class=\"right fit\">Score</th><th>URL</th><th class=\"fit\">Geo</th><th class=\"fit\">Device</th><th class=\"fit\">Friction</th>
+    </tr></thead><tbody>\${rows}</tbody></table></div>\`;
+    document.getElementById('out').innerHTML = \`<div class=\"card shadow\">\${head}\${table}</div>\`;
   }catch(e){ statusEl.textContent = 'Error'; document.getElementById('out').innerHTML = '<p class="err">'+e+'</p>'; }
 }
 document.getElementById('runBtn').addEventListener('click', (e)=>{ e.preventDefault(); runInspect(); });

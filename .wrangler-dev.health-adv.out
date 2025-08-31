@@ -1,0 +1,92 @@
+
+==> Health (plain + detail JSON)
+okok
+{
+  "status": "ok",
+  "info": {
+    "service": "aiqbrain-offer-engine",
+    "version": "1.1.0"
+  },
+  "counts": {
+    "registry": 7,
+    "fallbacks": 3,
+    "merged": 8
+  },
+  "coverage": {
+    "networks": [
+      "ogads",
+      "cpagrip",
+      "mylead"
+    ],
+    "geos": [
+      "US",
+      "UK",
+      "CA"
+    ],
+    "devices": [
+      "mobile",
+      "desktop"
+    ]
+  }
+}
+
+==> Unauthorized search (should be 401)
+status=401
+
+==> Flat search + _score present
+{
+  "len": 7,
+  "sample": {
+    "id": "ogads_us_android_68831",
+    "network": "OGAds",
+    "payout": 2.1,
+    "_score": 0.6262804222982201
+  }
+}
+
+==> Traffic split (default friction=7)
+{
+  "counts": {
+    "green": 8,
+    "yellow": 0,
+    "total": 8
+  },
+  "rules": {
+    "payout_min": 0,
+    "friction_max": 7,
+    "allowed_traffic_mode": "all"
+  }
+}
+
+==> Payout split (threshold=2)
+{
+  "counts": {
+    "whales": 2,
+    "minnows": 6,
+    "total": 8
+  },
+  "rules": {
+    "whale_threshold": 2
+  }
+}
+
+==> Traffic split with whale filter (threshold=2)
+{
+  "counts": {
+    "green": 2,
+    "yellow": 0,
+    "total": 2
+  },
+  "rules": {
+    "payout_min": 0,
+    "friction_max": 7,
+    "allowed_traffic_mode": "all",
+    "whale_threshold": 2
+  }
+}
+
+==> OpenAPI sanity (version + param count)
+3.1.0
+14
+
+Advanced health checks completed with fail=0

@@ -1,0 +1,65 @@
+==> 1) Health
+ok
+==> 2) Search (flat)
+5
+{
+  "id": "ogads_us_android_68831",
+  "name": "US Android — $750 Gift Card (OGAds)",
+  "url": "https://singingfiles.com/show.php?l=0&u=2427730&id=68831&tracking_id=",
+  "network": "OGAds",
+  "payout": 2.1,
+  "geo": [
+    "US"
+  ],
+  "device": [
+    "mobile"
+  ],
+  "vertical": "sweeps",
+  "allowed_traffic": [
+    "Reddit",
+    "TikTok",
+    "Pinterest"
+  ],
+  "friction_minutes": 5,
+  "notes": "Android-first US gift-card path; fast flow",
+  "_score": 0.6262804222982201
+}
+
+==> 3) Search (split; GREEN<=7 by default)
+{
+  "counts": {
+    "green": 5,
+    "yellow": 0,
+    "total": 5
+  },
+  "sample_green": {
+    "id": "ogads_us_android_68831",
+    "name": "US Android — $750 Gift Card (OGAds)",
+    "url": "https://singingfiles.com/show.php?l=0&u=2427730&id=68831&tracking_id=",
+    "network": "OGAds",
+    "payout": 2.1,
+    "geo": [
+      "US"
+    ],
+    "device": [
+      "mobile"
+    ],
+    "vertical": "sweeps",
+    "allowed_traffic": [
+      "Reddit",
+      "TikTok",
+      "Pinterest"
+    ],
+    "friction_minutes": 5,
+    "notes": "Android-first US gift-card path; fast flow",
+    "_score": 0.6262804222982201,
+    "tier": "green"
+  },
+  "sample_yellow": null
+}
+
+==> 4) OpenAPI (version, param count)
+5
+14
+
+==> 5) Vault (public split)
