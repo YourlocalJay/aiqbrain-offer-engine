@@ -1,3 +1,4 @@
+import { describe, it, expect } from "vitest";
 import worker from './src/worker';
 
 // Minimal KV stub
@@ -28,4 +29,3 @@ describe('worker endpoints', () => {
     expect(text).toContain('Manual Offer Entry');
   });
 });
-
