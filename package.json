@@ -4,6 +4,7 @@
     "lint": "eslint . || true",
     "test": "vitest --run || echo \"(no tests)\"",
     "check:ready": "pnpm lint && pnpm test",
+    "check:worker": "bash scripts/health-worker.sh",
     "smoke": "./smoke.sh",
     "health:adv": "./scripts/health-adv.sh"
   },
