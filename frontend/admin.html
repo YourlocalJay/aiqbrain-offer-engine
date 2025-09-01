@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Admin – Manual Offer Entry</title>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px}
+label{display:block;margin-top:8px}
+input,textarea{width:100%;max-width:560px;padding:8px;margin-top:4px}
+button{margin-top:12px;padding:8px 12px}
+.row{max-width:640px}
+.ok{color:#2e7d32}
+.err{color:#b71c1c}
+</style>
+<h1>Manual Offer Entry</h1>
+<div class="row">
+  <label>ADMIN_TOKEN</label>
+  <input id="token" placeholder="paste admin token"/>
+  <label>Offer JSON (single offer)</label>
+  <textarea id="offer" rows="10" placeholder='{"id":"my_offer_1","name":"Test","url":"https://example.com","network":"Manual","payout":1.2,"geo":["US"],"device":["mobile"],"allowed_traffic":["Reddit"],"friction_minutes":5}'></textarea>
+  <button id="submit">Upsert Offer</button>
+  <div id="out"></div>
+  <p class="muted">This UI calls <code>/admin/offers</code> with Authorization: Bearer ADMIN_TOKEN.</p>
+  <p><a href="/health">/health</a> · <a href="/api/offers">/api/offers</a></p>
+  </div>
+<script>
+document.getElementById('submit').addEventListener('click', async ()=>{
+  const raw = document.getElementById('offer').value;
+  const token = document.getElementById('token').value.trim();
+  let obj; try{ obj = JSON.parse(raw); }catch(e){ document.getElementById('out').innerHTML='<p class=err>Invalid JSON</p>'; return; }
+  const res = await fetch('/admin/offers', { method:'PUT', headers:{ 'Content-Type':'application/json', 'Authorization': 'Bearer '+token }, body: JSON.stringify(obj) });
+  const data = await res.json().catch(()=>({}));
+  document.getElementById('out').innerHTML = res.ok ? '<p class=ok>Upserted '+(data.upserted||0)+' offer(s)</p>' : '<p class=err>Error: '+(data.error||res.status)+'</p>';
+});
+</script>
+</html>

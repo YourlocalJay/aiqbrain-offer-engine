@@ -51,6 +51,10 @@ export interface Env {
   OGADS_API_KEY?: string; // Bearer token
   OGADS_BASE?: string; // default https://unlockcontent.net/api/v2
   OGADS_OFFERS_PATH?: string; // e.g., /offers
+  // Admin + integrations
+  ADMIN_TOKEN?: string;
+  WEBHOOK_URL?: string;
+  MYLEAD_API_TOKEN?: string; // direct API token for /sync/offers/mylead
 }
 
 type Offer = {
@@ -123,6 +127,8 @@ const FALLBACK_OFFERS: Offer[] = [
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JSON import type inferred at runtime by bundler
 import REGISTRY from "../registry.json";
+// @ts-ignore - runtime bundler resolves JSON
+import SEEDS from "../offers.seed.json";
 type RegOffer = Partial<Offer> & { id: string; name: string; url: string; network: string };
 
 function normalize(list?: string[]) {
@@ -559,6 +565,167 @@ function NormalizeNet(networkName: string) {
     notes: o.notes || ''
   });
 }
+
+// ===== Minimal JSON/response helper =====
+function json(data: any, origin?: string, status = 200, headers: Record<string, string> = {}) {
+  return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json; charset=utf-8", ...okCORS(origin), ...headers } });
+}
+
+// ===== Seeding + KV index helpers =====
+type SeedOffer = Partial<Offer> & { id: string; name: string; url: string; network: string };
+const OFFER_INDEX_KEY = "offers:index"; // array of offer IDs
+
+async function ensureSeeded(env?: Env) {
+  if (!env?.REGISTRY) return;
+  const idx = await kvGetJSON<string[]>(env.REGISTRY, OFFER_INDEX_KEY);
+  if (Array.isArray(idx) && idx.length) return; // already seeded
+  const seeds: SeedOffer[] = Array.isArray((SEEDS as any)?.offers) ? (SEEDS as any).offers : [];
+  if (!seeds.length) return;
+  const ids: string[] = [];
+  for (const s of seeds) {
+    const id = (s.id || cryptoRandomId()).trim();
+    const o: Offer = {
+      id,
+      name: s.name || "",
+      url: s.url || "",
+      network: s.network || "",
+      payout: (s as any).payout ?? 0,
+      epc: (s as any).epc ?? null,
+      geo: Array.isArray(s.geo) ? (s.geo as string[]) : [],
+      device: Array.isArray(s.device) ? (s.device as string[]) : [],
+      vertical: (s as any).vertical || "",
+      allowed_traffic: Array.isArray((s as any).allowed_traffic) ? (s as any).allowed_traffic as string[] : [],
+      friction_minutes: (s as any).friction_minutes ?? null as any,
+      notes: s.notes || ""
+    } as Offer;
+    await kvPutJSON(env.REGISTRY, `offers:by_id:${id}`, o);
+    ids.push(id);
+  }
+  await kvPutJSON(env.REGISTRY, OFFER_INDEX_KEY, ids);
+}
+
+async function getAllOffers(env?: Env): Promise<Offer[]> {
+  if (!env?.REGISTRY) return [];
+  const ids = await kvGetJSON<string[]>(env.REGISTRY, OFFER_INDEX_KEY);
+  if (!Array.isArray(ids) || !ids.length) {
+    // fallback to seeds immediately
+    const seeds: SeedOffer[] = Array.isArray((SEEDS as any)?.offers) ? (SEEDS as any).offers : [];
+    return seeds.map(s => ({
+      id: s.id,
+      name: s.name,
+      url: s.url,
+      network: s.network,
+      payout: (s as any).payout ?? 0,
+      epc: (s as any).epc ?? null,
+      geo: (s as any).geo || [],
+      device: (s as any).device || [],
+      vertical: (s as any).vertical || "",
+      allowed_traffic: (s as any).allowed_traffic || [],
+      friction_minutes: (s as any).friction_minutes ?? null,
+      notes: s.notes || ""
+    } as Offer));
+  }
+  const out: Offer[] = [];
+  for (const id of ids) {
+    const o = await kvGetJSON<Offer>(env.REGISTRY, `offers:by_id:${id}`);
+    if (o) out.push(o);
+  }
+  return out;
+}
+
+async function upsertOffers(env: Env, list: Partial<Offer>[]): Promise<Offer[]> {
+  if (!env?.REGISTRY) return [];
+  const ids = (await kvGetJSON<string[]>(env.REGISTRY, OFFER_INDEX_KEY)) || [];
+  const idset = new Set(ids);
+  const up: Offer[] = [];
+  for (const p of list) {
+    const id = (p.id || cryptoRandomId()).trim();
+    const existing = await kvGetJSON<Offer>(env.REGISTRY, `offers:by_id:${id}`);
+    const merged: Offer = {
+      id,
+      name: p.name ?? existing?.name ?? "",
+      url: p.url ?? existing?.url ?? "",
+      network: p.network ?? existing?.network ?? "",
+      payout: (p.payout as any) ?? existing?.payout ?? 0,
+      epc: p.epc ?? existing?.epc ?? null,
+      geo: (p.geo as any) ?? existing?.geo ?? [],
+      device: (p.device as any) ?? existing?.device ?? [],
+      vertical: (p.vertical as any) ?? existing?.vertical ?? "",
+      allowed_traffic: (p.allowed_traffic as any) ?? existing?.allowed_traffic ?? [],
+      friction_minutes: (p.friction_minutes as any) ?? existing?.friction_minutes ?? null as any,
+      notes: p.notes ?? existing?.notes ?? ""
+    } as Offer;
+    await kvPutJSON(env.REGISTRY, `offers:by_id:${id}`, merged);
+    if (!idset.has(id)) { idset.add(id); }
+    up.push(merged);
+  }
+  await kvPutJSON(env.REGISTRY, OFFER_INDEX_KEY, Array.from(idset));
+  return up;
+}
+
+// ===== MyLead fetch (token-based) =====
+async function fetchMylead(token: string, env?: Env): Promise<{ fetched: number; items: Partial<Offer>[] }> {
+  const base = (env?.MYLEAD_API_BASE || 'https://api.mylead.eu/api/external/v1/').replace(/\/$/, '/');
+  const path = env?.MYLEAD_OFFERS_PATH || 'offers';
+  const url = base + (path.startsWith('/') ? path.slice(1) : path);
+  const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' } });
+  if (!res.ok) return { fetched: 0, items: [] };
+  const data: any = await res.json().catch(() => ({}));
+  const arr: any[] = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : (Array.isArray(data?.offers) ? data.offers : []));
+  const items = arr.map(NormalizeNet('MyLead'));
+  return { fetched: items.length, items };
+}
+
+// ===== Discord proof-drops =====
+async function discordProof(webhook: string, rec: { subid: string; offer: string; payout: number; status: string; transaction_id: string; time: string }) {
+  const s = (rec.status || '').toLowerCase();
+  const color = s.includes('approved') || s === 'approved' ? 3066993 : (s.includes('pending') ? 16202377 : 15158332);
+  const payload = {
+    embeds: [{
+      title: `Postback: ${s.toUpperCase()}`,
+      description: `Offer: ${rec.offer}\nSubID: ${rec.subid || '-'}\nPayout: $${(rec.payout || 0).toFixed(2)}`,
+      color,
+      timestamp: rec.time,
+      footer: { text: rec.transaction_id }
+    }]
+  };
+  await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+}
+
+// ===== Simple admin form HTML =====
+const ADMIN_HTML = `<!doctype html>
+<html lang="en"><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Admin – Manual Offer Entry</title>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px}
+label{display:block;margin-top:8px}
+input,textarea{width:100%;max-width:560px;padding:8px;margin-top:4px}
+button{margin-top:12px;padding:8px 12px}
+.row{max-width:640px}
+.ok{color:#2e7d32}
+.err{color:#b71c1c}
+</style>
+<h1>Manual Offer Entry</h1>
+<div class="row">
+  <label>ADMIN_TOKEN</label>
+  <input id="token" placeholder="paste admin token"/>
+  <label>Offer JSON (single offer)</label>
+  <textarea id="offer" rows="10" placeholder='{"id":"my_offer_1","name":"Test","url":"https://example.com","network":"Manual","payout":1.2,"geo":["US"],"device":["mobile"],"allowed_traffic":["Reddit"],"friction_minutes":5}'></textarea>
+  <button id="submit">Upsert Offer</button>
+  <div id="out"></div>
+</div>
+<script>
+document.getElementById('submit').addEventListener('click', async ()=>{
+  const raw = document.getElementById('offer').value;
+  const token = document.getElementById('token').value.trim();
+  let obj; try{ obj = JSON.parse(raw); }catch(e){ document.getElementById('out').innerHTML='<p class=err>Invalid JSON</p>'; return; }
+  const res = await fetch('/admin/offers', { method:'PUT', headers:{ 'Content-Type':'application/json', 'Authorization': 'Bearer '+token }, body: JSON.stringify(obj) });
+  const data = await res.json().catch(()=>({}));
+  document.getElementById('out').innerHTML = res.ok ? '<p class=ok>Upserted '+(data.upserted||0)+' offer(s)</p>' : '<p class=err>Error: '+(data.error||res.status)+'</p>';
+});
+</script>
+</html>`;
 function cryptoRandomId() {
   // best-effort unique ID when upstream lacks one
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -1141,6 +1308,78 @@ export default {
     // CORS preflight
     if (req.method === "OPTIONS") {
       return new Response(null, { headers: okCORS(originHdr) });
+    }
+
+    // One-time seeding if missing
+    await ensureSeeded(env).catch(() => {});
+
+    // Minimal health endpoint
+    if (req.method === "GET" && pathname === "/health") {
+      const routes = [
+        "/health",
+        "/api/offers",
+        "/sync/offers/mylead",
+        "/postback",
+        "/admin",
+        "/admin/offers"
+      ];
+      return json({ ok: true, routes, time: new Date().toISOString() }, originHdr);
+    }
+
+    // Serve admin UI (alias)
+    if (req.method === "GET" && (pathname === "/admin" || pathname === "/admin.html")) {
+      return new Response(ADMIN_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", ...okCORS(originHdr) } });
+    }
+
+    // Admin upsert offers (PUT)
+    if (pathname === "/admin/offers" && req.method === "PUT") {
+      const auth = req.headers.get("authorization") || "";
+      const token = auth.replace(/^Bearer\s+/i, "");
+      if (!env.ADMIN_TOKEN || token !== env.ADMIN_TOKEN) {
+        return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { "Content-Type": "application/json", ...okCORS(originHdr) } });
+      }
+      let body: any;
+      try { body = await req.json(); } catch { return new Response(JSON.stringify({ error: "invalid_json" }), { status: 400, headers: { "Content-Type": "application/json", ...okCORS(originHdr) } }); }
+      const arr: Partial<Offer>[] = Array.isArray(body) ? body : [body];
+      const up = await upsertOffers(env, arr);
+      return json({ upserted: up.length }, originHdr);
+    }
+
+    // Public offers API (KV with fallback to seeds)
+    if (req.method === "GET" && pathname === "/api/offers") {
+      const url = new URL(req.url);
+      const limit = Math.max(1, Math.min(1000, Number(url.searchParams.get("limit") || 100)));
+      const all = await getAllOffers(env);
+      return json(all.slice(0, limit), originHdr);
+    }
+
+    // Sync from MyLead using env.MYLEAD_API_TOKEN if present
+    if (req.method === "POST" && pathname === "/sync/offers/mylead") {
+      const token = env.MYLEAD_API_TOKEN || env.MYLEAD_API_KEY || "";
+      if (!token) return json({ fetched: 0, upserted: 0, message: "missing_token" }, originHdr);
+      const { fetched, items } = await fetchMylead(token, env).catch(() => ({ fetched: 0, items: [] as Partial<Offer>[] }));
+      const upserted = (await upsertOffers(env, items)).length;
+      return json({ fetched, upserted }, originHdr);
+    }
+
+    // Postback handler with optional Discord webhook
+    if (req.method === "GET" && pathname === "/postback") {
+      const url = new URL(req.url);
+      const subid = url.searchParams.get("subid") || url.searchParams.get("sub_id") || url.searchParams.get("s1") || "";
+      const offer = url.searchParams.get("offer") || url.searchParams.get("offer_id") || "";
+      const payout = Number(url.searchParams.get("payout") || url.searchParams.get("amount") || 0);
+      const status = (url.searchParams.get("status") || "approved").toLowerCase();
+      const transaction_id = url.searchParams.get("transaction_id") || url.searchParams.get("tid") || `${subid}:${offer}`;
+      const key = `postbacks:${transaction_id}`;
+      const exists = await env.REGISTRY?.get(key);
+      if (!exists) {
+        const rec = { subid, offer, payout, status, transaction_id, time: new Date().toISOString() };
+        await env.REGISTRY?.put(key, JSON.stringify(rec));
+        if (env.WEBHOOK_URL) {
+          ctx.waitUntil(discordProof(env.WEBHOOK_URL, rec).catch(() => {}));
+        }
+      }
+      return json({ ok: true, deduped: Boolean(exists) }, originHdr);
     }
 
     // health (public) — supports HEAD and JSON/text negotiation

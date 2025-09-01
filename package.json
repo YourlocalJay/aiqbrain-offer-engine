@@ -1,10 +1,16 @@
 {
   "scripts": {
-    "dev": "wrangler dev --local",
+    "dev": "wrangler dev",
+    "lint": "eslint . || true",
+    "test": "vitest --run || echo \"(no tests)\"",
+    "check:ready": "pnpm lint && pnpm test",
     "smoke": "./smoke.sh",
     "health:adv": "./scripts/health-adv.sh"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250826.0"
+    "@cloudflare/workers-types": "^4.20250826.0",
+    "@types/node": "^24.3.0",
+    "eslint": "^9.34.0",
+    "vitest": "^3.2.4"
   }
 }

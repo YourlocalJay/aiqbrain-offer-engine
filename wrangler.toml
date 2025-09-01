@@ -33,6 +33,9 @@ FALLBACK_GENERIC = "https://aiqengage.com/access"
 GREEN_MAX_MINUTES = "7"  # default threshold for 'GREEN' tier (videos ≤7 min)
 MYLEAD_API_BASE = "https://api.mylead.eu/api/external/v1/"
 MYLEAD_OFFERS_PATH = ""
+MYLEAD_API_TOKEN = ""
+ADMIN_TOKEN = ""
+WEBHOOK_URL = ""
 
 # KV namespaces (IDs from
 #   npx wrangler kv namespace create REGISTRY

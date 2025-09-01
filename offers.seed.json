@@ -1,0 +1,56 @@
+{
+  "offers": [
+    {
+      "id": "ogads_us_android_68831",
+      "name": "US Android — $750 Gift Card (OGAds)",
+      "url": "https://singingfiles.com/show.php?l=0&u=2427730&id=68831&tracking_id=",
+      "network": "OGAds",
+      "payout": 2.10,
+      "geo": ["US"],
+      "device": ["mobile"],
+      "vertical": "sweeps",
+      "allowed_traffic": ["Reddit", "TikTok", "Pinterest"],
+      "friction_minutes": 5,
+      "notes": "Android-first US gift-card path; fast flow"
+    },
+    {
+      "id": "ogads_us_ios_69234",
+      "name": "US iOS — $750 Gift Card (OGAds)",
+      "url": "https://singingfiles.com/show.php?l=0&u=2427730&id=69234&tracking_id=",
+      "network": "OGAds",
+      "payout": 2.10,
+      "geo": ["US"],
+      "device": ["mobile"],
+      "vertical": "sweeps",
+      "allowed_traffic": ["Reddit", "TikTok", "Pinterest"],
+      "friction_minutes": 5,
+      "notes": "iOS-optimized US gift-card path"
+    },
+    {
+      "id": "cpagrip_us_giftcard_a1",
+      "name": "US Gift Card — Mobile (CPAGrip)",
+      "url": "https://www.cpagrip.com/offer/landing?tracking_id=",
+      "network": "CPAGrip",
+      "payout": 1.80,
+      "geo": ["US"],
+      "device": ["mobile"],
+      "vertical": "sweeps",
+      "allowed_traffic": ["Reddit", "Pinterest"],
+      "friction_minutes": 6,
+      "notes": "Short flow; good weekend volume"
+    },
+    {
+      "id": "mylead_us_win500_b1",
+      "name": "Win $500 — US (MyLead)",
+      "url": "https://YOUR-MYLEAD-LINK",
+      "network": "MyLead",
+      "payout": 1.60,
+      "geo": ["US"],
+      "device": ["mobile", "desktop"],
+      "vertical": "sweeps",
+      "allowed_traffic": ["TikTok", "Reddit"],
+      "friction_minutes": 4,
+      "notes": "Desktop OK; low friction"
+    }
+  ]
+}
