@@ -1305,8 +1305,16 @@ export default {
     const { pathname } = new URL(req.url);
     const originHdr = req.headers.get("Origin") || "*";
 
-    // CORS preflight
+    // CORS preflight (path-aware)
     if (req.method === "OPTIONS") {
+      // Allow PUT for /admin/offers CORS preflight
+      if (pathname === "/admin/offers") {
+        return new Response(null, { headers: { 
+          ...okCORS(originHdr),
+          "Access-Control-Allow-Methods": "PUT, OPTIONS",
+          "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept"
+        }});
+      }
       return new Response(null, { headers: okCORS(originHdr) });
     }
 
