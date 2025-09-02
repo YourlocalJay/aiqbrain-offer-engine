@@ -39,6 +39,13 @@ curl -fsSI "${DOMAIN}/admintemp" | grep -qi 'content-type: text/html' \
   && pass "domain /admintemp serves HTML" \
   || fail "domain /admintemp not HTML"
 
+# 7) /console (www optional check)
+if [[ "${WWW:-0}" == "1" ]]; then
+  curl -fsSI "https://www.${DOMAIN#https://}/console" >/dev/null 2>&1 \
+    && pass "www /console reachable (status seen in headers)" \
+    || echo "ℹ️  www /console not reachable (route not attached or WAF)"
+fi
+
 # If BASIC_AUTH is set (user:pass), show example curl
 if [[ -n "${BASIC_AUTH:-}" ]]; then
   echo "Example (Basic Auth): curl -I -u \"${BASIC_AUTH}\" ${DOMAIN}/console"
@@ -49,6 +56,9 @@ if [[ -n "${WBASE}" ]]; then
   curl -fsS "${WBASE}/health" | jq .ok >/dev/null 2>&1 && pass "workers.dev /health OK" || fail "workers.dev /health failed"
   curl -fsS "${WBASE}/api/offers?limit=1" | jq '.[0]' >/dev/null 2>&1 && pass "workers.dev /api/offers OK" || fail "workers.dev /api/offers failed"
   curl -fsS -X POST "${WBASE}/sync/offers/mylead" | jq .upserted >/dev/null 2>&1 && pass "workers.dev POST /sync/offers/mylead OK" || fail "workers.dev POST /sync failed"
+  curl -fsSI "${WBASE}/console" | grep -qi 'content-type: text/html' && pass "workers.dev /console HTML" || echo "ℹ️  workers.dev /console not HTML"
+  curl -fsSI "${WBASE}/api/admin/ui" | grep -qi 'content-type: text/html' && pass "workers.dev /api/admin/ui HTML" || echo "ℹ️  workers.dev /api/admin/ui not HTML"
+  curl -fsSI "${WBASE}/admin.txt" | grep -qi 'content-type: text/plain' && pass "workers.dev /admin.txt text/plain" || echo "ℹ️  workers.dev /admin.txt not text/plain"
 fi
 
 echo "== OK =="

@@ -1348,6 +1348,26 @@ export default {
     // One-time seeding if missing
     await ensureSeeded(env).catch(() => {});
 
+    // ===== Admin UI ALIASES FIRST (GET/HEAD) =====
+    if ((req.method === "GET" || req.method === "HEAD") && (
+      pathname === "/admin" || pathname === "/admin.html" ||
+      pathname === "/console" || pathname === "/console.html" ||
+      pathname === "/admintemp" || pathname === "/admintemp.html" ||
+      pathname === "/xadmin" || pathname === "/xadmin.html" ||
+      pathname === "/api/admin/ui"
+    )) {
+      const ba = checkBasicAuth(req, env, originHdr, pathname);
+      if (ba) return ba;
+      const headers = { "Content-Type": "text/html; charset=utf-8", ...okCORS(originHdr) };
+      return req.method === "HEAD" ? new Response(null, { headers }) : new Response(ADMIN_HTML, { headers });
+    }
+
+    // Plain-text fallback for strict WAFs — also support HEAD
+    if ((req.method === "GET" || req.method === "HEAD") && pathname === "/admin.txt") {
+      const headers = { "Content-Type": "text/plain; charset=utf-8", ...okCORS(originHdr) };
+      return req.method === "HEAD" ? new Response(null, { headers }) : new Response(ADMIN_HTML, { headers });
+    }
+
     // Minimal health endpoint
     if (req.method === "GET" && pathname === "/health") {
       const routes = [
@@ -1355,13 +1375,20 @@ export default {
         "/api/offers",
         "/sync/offers/mylead",
         "/postback",
-        "/admin",
-        "/admin/offers"
+        // admin UI aliases
+        "/admin", "/admin.html",
+        "/console", "/console.html",
+        "/admintemp", "/admintemp.html",
+        "/xadmin", "/xadmin.html",
+        "/api/admin/ui",
+        "/admin.txt",
+        // admin upsert aliases
+        "/admin/offers", "/console/offers", "/admintemp/offers", "/xadmin/offers", "/api/admin/offers"
       ];
       return json({ ok: true, routes, time: new Date().toISOString() }, originHdr);
     }
 
-    // Serve admin UI (alias) — support GET and HEAD
+    // Serve admin UI (aliases) — support GET and HEAD
     if ((req.method === "GET" || req.method === "HEAD") && (
         pathname === "/admin" || pathname === "/admin.html" ||
         pathname === "/console" || pathname === "/console.html" ||
@@ -1377,7 +1404,7 @@ export default {
         : new Response(ADMIN_HTML, { headers });
     }
 
-    // Some WAFs allow text/plain better than text/html (support GET and HEAD)
+    // Some WAFs allow text/plain better than text/html — support GET and HEAD
     if ((req.method === "GET" || req.method === "HEAD") && pathname === "/admin.txt") {
       const headers = { "Content-Type": "text/plain; charset=utf-8", ...okCORS(originHdr) };
       return req.method === "HEAD"
@@ -2183,3 +2210,19 @@ document.getElementById('runBtn').addEventListener('click', (e)=>{ e.preventDefa
 function serveInspector(origin?: string){
   return new Response(INSPECTOR_HTML(''), { headers: { 'Content-Type': 'text/html; charset=utf-8', ...okCORS(origin) } });
 }
+    // ===== Debug helpers =====
+    if (req.method === "GET" && pathname === "/__router") {
+      const q = new URL(req.url);
+      const p = q.searchParams.get("path") || pathname;
+      return json({ matched: "debug", method: req.method, path: p }, originHdr);
+    }
+    if (req.method === "GET" && pathname === "/__version") {
+      let v = "0.0.0", n = "aiqbrain-offer-engine";
+      try {
+        // @ts-ignore: bundler may inline
+        const pkg = await import("../package.json");
+        v = (pkg as any)?.version || v;
+        n = (pkg as any)?.name || n;
+      } catch {}
+      return json({ name: n, version: v }, originHdr);
+    }
