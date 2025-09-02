@@ -1361,8 +1361,8 @@ export default {
       return json({ ok: true, routes, time: new Date().toISOString() }, originHdr);
     }
 
-    // Serve admin UI (alias)
-    if (req.method === "GET" && (
+    // Serve admin UI (alias) — support GET and HEAD
+    if ((req.method === "GET" || req.method === "HEAD") && (
         pathname === "/admin" || pathname === "/admin.html" ||
         pathname === "/console" || pathname === "/console.html" ||
         pathname === "/admintemp" || pathname === "/admintemp.html" ||
@@ -1371,12 +1371,18 @@ export default {
       )) {
       const ba = checkBasicAuth(req, env, originHdr, pathname);
       if (ba) return ba;
-      return new Response(ADMIN_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", ...okCORS(originHdr) } });
+      const headers = { "Content-Type": "text/html; charset=utf-8", ...okCORS(originHdr) };
+      return req.method === "HEAD"
+        ? new Response(null, { headers })
+        : new Response(ADMIN_HTML, { headers });
     }
 
-    // Some WAFs allow text/plain better than text/html
-    if (req.method === "GET" && pathname === "/admin.txt") {
-      return new Response(ADMIN_HTML, { headers: { "Content-Type": "text/plain; charset=utf-8", ...okCORS(originHdr) } });
+    // Some WAFs allow text/plain better than text/html (support GET and HEAD)
+    if ((req.method === "GET" || req.method === "HEAD") && pathname === "/admin.txt") {
+      const headers = { "Content-Type": "text/plain; charset=utf-8", ...okCORS(originHdr) };
+      return req.method === "HEAD"
+        ? new Response(null, { headers })
+        : new Response(ADMIN_HTML, { headers });
     }
 
     // Admin upsert offers (PUT)
