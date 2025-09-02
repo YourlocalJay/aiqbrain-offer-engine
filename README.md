@@ -164,3 +164,24 @@ Pulls live offers from OGAds via the UnlockContent API using a Bearer token.
 - `wrangler.toml` uses a single `workers_dev = true` and includes asset binding for `public/`.
 - Keep secrets in Wrangler (`wrangler secret put ...`); dev defaults are non-sensitive.
  - For GPT Actions and API consumer details, see `INTEGRATION.md`.
+## Admin Workarounds
+
+Cloudflare’s free plan may present managed challenges on `/admin*`. This Worker supports non-destructive alternatives you can route to the same Worker:
+
+- Alternate paths (no code changes needed in clients):
+  - `/console*` → Admin UI and upsert endpoint
+  - `/admintemp*` → Admin UI and upsert endpoint
+- Dedicated subdomain: point `admin.aiqbrain.com/*` to this Worker for cleaner separation.
+- workers.dev: use `https://aiqbrain-offer-engine.<acct>.workers.dev/console` for out-of-band access.
+- Optional Basic Auth (HTML only): set `BASIC_AUTH` secret as `user:pass` to require Basic auth on the admin HTML aliases (`/console*`, `/admintemp*`). Bearer `ADMIN_TOKEN` remains required for PUT upserts.
+
+Zero Trust Access (optional, recommended):
+- Map an Access self-hosted app to `/console*` or `/admintemp*` (avoid `/admin*`).
+- Session duration: ~24h. Identity provider: One-time PIN is a simple start.
+- Keep Browser Integrity Check ON; Access gates after that.
+
+Routes to configure in Cloudflare → Workers & Pages → Domains & Routes:
+- `aiqbrain.com/console*` → aiqbrain-offer-engine
+- `aiqbrain.com/admintemp*` → aiqbrain-offer-engine
+- (Optional) `admin.aiqbrain.com/*` → aiqbrain-offer-engine
+- Keep existing API routes (e.g., `/health`, `/api/*`, `/sync/*`, `/postback`) as-is.

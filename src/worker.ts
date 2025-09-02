@@ -55,6 +55,7 @@ export interface Env {
   ADMIN_TOKEN?: string;
   WEBHOOK_URL?: string;
   MYLEAD_API_TOKEN?: string; // direct API token for /sync/offers/mylead
+  BASIC_AUTH?: string; // optional "user:pass" to protect admin HTML aliases
 }
 
 type Offer = {
@@ -808,6 +809,26 @@ function isKeyAllowed(key: string | null, env: Env) {
   return !!(key && set.includes(key));
 }
 
+// ===== Optional Basic Auth for admin HTML (console/admintemp) =====
+function needsBasicAuth(pathname: string): boolean {
+  return pathname.startsWith('/console') || pathname.startsWith('/admintemp');
+}
+function checkBasicAuth(req: Request, env: Env, origin?: string, pathname?: string): Response | undefined {
+  if (!env.BASIC_AUTH) return undefined; // disabled unless set
+  const p = pathname ?? new URL(req.url).pathname;
+  if (!needsBasicAuth(p)) return undefined;
+  const want = env.BASIC_AUTH.trim(); // format: user:pass
+  const got = req.headers.get('authorization') || '';
+  if (!got.startsWith('Basic ')) {
+    return new Response('Unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Basic realm="admin", charset="UTF-8"', ...okCORS(origin) } });
+  }
+  try {
+    const decoded = atob(got.slice(6));
+    if (decoded === want) return undefined;
+  } catch {}
+  return new Response('Unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Basic realm="admin", charset="UTF-8"', ...okCORS(origin) } });
+}
+
 async function safeJson(res: Response) {
   // Avoid 1101 when upstream returns HTML/CF error
   const ct = res.headers.get("content-type") || "";
@@ -1336,6 +1357,8 @@ export default {
 
     // Serve admin UI (alias)
     if (req.method === "GET" && (pathname === "/admin" || pathname === "/admin.html" || pathname === "/console" || pathname === "/console.html" || pathname === "/admintemp" || pathname === "/admintemp.html")) {
+      const ba = checkBasicAuth(req, env, originHdr, pathname);
+      if (ba) return ba;
       return new Response(ADMIN_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", ...okCORS(originHdr) } });
     }
 
