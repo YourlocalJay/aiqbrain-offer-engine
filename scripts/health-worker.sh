@@ -31,6 +31,11 @@ curl -fsSI "${DOMAIN}/admin" | grep -qi 'content-type: text/html' && pass "domai
 # 5) /console (domain)
 curl -fsSI "${DOMAIN}/console" | grep -qi 'content-type: text/html' && pass "domain /console serves HTML" || fail "domain /console not HTML"
 
+# 6) /admintemp (domain)
+curl -fsSI "${DOMAIN}/admintemp" | grep -qi 'content-type: text/html' \
+  && pass "domain /admintemp serves HTML" \
+  || fail "domain /admintemp not HTML"
+
 # Optional workers.dev checks if ACCT present
 if [[ -n "${WBASE}" ]]; then
   curl -fsS "${WBASE}/health" | jq .ok >/dev/null 2>&1 && pass "workers.dev /health OK" || fail "workers.dev /health failed"
