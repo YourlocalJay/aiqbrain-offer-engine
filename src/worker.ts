@@ -1328,8 +1328,14 @@ export default {
 
     // CORS preflight (path-aware)
     if (req.method === "OPTIONS") {
-      // Allow PUT for /admin/offers, /console/offers, /admintemp/offers CORS preflight
-      if (pathname === "/admin/offers" || pathname === "/console/offers" || pathname === "/admintemp/offers") {
+      // Allow PUT for admin upsert aliases CORS preflight
+      if (
+        pathname === "/admin/offers" ||
+        pathname === "/console/offers" ||
+        pathname === "/admintemp/offers" ||
+        pathname === "/xadmin/offers" ||
+        pathname === "/api/admin/offers"
+      ) {
         return new Response(null, { headers: { 
           ...okCORS(originHdr),
           "Access-Control-Allow-Methods": "PUT, OPTIONS",
@@ -1356,14 +1362,25 @@ export default {
     }
 
     // Serve admin UI (alias)
-    if (req.method === "GET" && (pathname === "/admin" || pathname === "/admin.html" || pathname === "/console" || pathname === "/console.html" || pathname === "/admintemp" || pathname === "/admintemp.html")) {
+    if (req.method === "GET" && (
+        pathname === "/admin" || pathname === "/admin.html" ||
+        pathname === "/console" || pathname === "/console.html" ||
+        pathname === "/admintemp" || pathname === "/admintemp.html" ||
+        pathname === "/xadmin" || pathname === "/xadmin.html" ||
+        pathname === "/api/admin/ui"
+      )) {
       const ba = checkBasicAuth(req, env, originHdr, pathname);
       if (ba) return ba;
       return new Response(ADMIN_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", ...okCORS(originHdr) } });
     }
 
+    // Some WAFs allow text/plain better than text/html
+    if (req.method === "GET" && pathname === "/admin.txt") {
+      return new Response(ADMIN_HTML, { headers: { "Content-Type": "text/plain; charset=utf-8", ...okCORS(originHdr) } });
+    }
+
     // Admin upsert offers (PUT)
-    if ((pathname === "/admin/offers" || pathname === "/console/offers" || pathname === "/admintemp/offers") && req.method === "PUT") {
+    if ((pathname === "/admin/offers" || pathname === "/console/offers" || pathname === "/admintemp/offers" || pathname === "/xadmin/offers" || pathname === "/api/admin/offers") && req.method === "PUT") {
       const auth = req.headers.get("authorization") || "";
       const token = auth.replace(/^Bearer\s+/i, "");
       if (!env.ADMIN_TOKEN || token !== env.ADMIN_TOKEN) {

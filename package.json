@@ -5,6 +5,7 @@
     "test": "vitest --run || echo \"(no tests)\"",
     "check:ready": "pnpm lint && pnpm test",
     "check:worker": "bash scripts/health-worker.sh",
+    "check:admin": "bash scripts/smoke-admin.sh https://aiqbrain.com",
     "smoke": "./smoke.sh",
     "health:adv": "./scripts/health-adv.sh"
   },
