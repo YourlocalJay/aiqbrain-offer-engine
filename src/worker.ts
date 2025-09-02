@@ -1307,8 +1307,8 @@ export default {
 
     // CORS preflight (path-aware)
     if (req.method === "OPTIONS") {
-      // Allow PUT for /admin/offers CORS preflight
-      if (pathname === "/admin/offers") {
+      // Allow PUT for /admin/offers and /console/offers CORS preflight
+      if (pathname === "/admin/offers" || pathname === "/console/offers") {
         return new Response(null, { headers: { 
           ...okCORS(originHdr),
           "Access-Control-Allow-Methods": "PUT, OPTIONS",
@@ -1335,12 +1335,12 @@ export default {
     }
 
     // Serve admin UI (alias)
-    if (req.method === "GET" && (pathname === "/admin" || pathname === "/admin.html")) {
+    if (req.method === "GET" && (pathname === "/admin" || pathname === "/admin.html" || pathname === "/console" || pathname === "/console.html")) {
       return new Response(ADMIN_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", ...okCORS(originHdr) } });
     }
 
     // Admin upsert offers (PUT)
-    if (pathname === "/admin/offers" && req.method === "PUT") {
+    if ((pathname === "/admin/offers" || pathname === "/console/offers") && req.method === "PUT") {
       const auth = req.headers.get("authorization") || "";
       const token = auth.replace(/^Bearer\s+/i, "");
       if (!env.ADMIN_TOKEN || token !== env.ADMIN_TOKEN) {

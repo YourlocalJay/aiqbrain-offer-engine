@@ -28,6 +28,9 @@ curl -fsS -X POST "${DOMAIN}/sync/offers/mylead" | jq .upserted >/dev/null 2>&1 
 # 4) /admin (domain)
 curl -fsSI "${DOMAIN}/admin" | grep -qi 'content-type: text/html' && pass "domain /admin serves HTML" || fail "domain /admin not HTML"
 
+# 5) /console (domain)
+curl -fsSI "${DOMAIN}/console" | grep -qi 'content-type: text/html' && pass "domain /console serves HTML" || fail "domain /console not HTML"
+
 # Optional workers.dev checks if ACCT present
 if [[ -n "${WBASE}" ]]; then
   curl -fsS "${WBASE}/health" | jq .ok >/dev/null 2>&1 && pass "workers.dev /health OK" || fail "workers.dev /health failed"
@@ -36,4 +39,3 @@ if [[ -n "${WBASE}" ]]; then
 fi
 
 echo "== OK =="
-
