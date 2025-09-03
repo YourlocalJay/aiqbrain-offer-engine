@@ -1375,15 +1375,17 @@ export default {
         "/api/offers",
         "/sync/offers/mylead",
         "/postback",
-        // admin UI aliases
-        "/admin", "/admin.html",
-        "/console", "/console.html",
-        "/admintemp", "/admintemp.html",
-        "/xadmin", "/xadmin.html",
+        "/admin",
+        "/admin/offers",
+        "/console",
+        "/console/offers",
+        "/admintemp",
+        "/admintemp/offers",
+        "/xadmin",
+        "/xadmin/offers",
         "/api/admin/ui",
-        "/admin.txt",
-        // admin upsert aliases
-        "/admin/offers", "/console/offers", "/admintemp/offers", "/xadmin/offers", "/api/admin/offers"
+        "/api/admin/offers",
+        "/admin.txt"
       ];
       return json({ ok: true, routes, time: new Date().toISOString() }, originHdr);
     }

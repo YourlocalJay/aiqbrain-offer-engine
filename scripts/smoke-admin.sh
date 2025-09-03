@@ -13,8 +13,8 @@ paths=(
 
 echo "== Admin UI probes on $DOMAIN =="
 for p in "${paths[@]}"; do
-  code=$(curl -sS -o /dev/null -w "%{http_code}" -I "$DOMAIN$p" || true)
-  ctype=$(curl -sS -I "$DOMAIN$p" 2>/dev/null | tr -d '\r' | awk 'BEGIN{IGNORECASE=1}/^content-type:/{print $2;exit}')
+  code=$(curl -sS -o /dev/null -w "%{http_code}" "${DOMAIN}${p}" || true)
+  ctype=$(curl -sS -o /dev/null -D - "${DOMAIN}${p}" 2>/dev/null | tr -d '\r' | awk 'BEGIN{IGNORECASE=1}/^content-type:/{print $2;exit}')
   printf "  %-16s  %-3s  %s\n" "$p" "$code" "${ctype:-"-"}"
 done
 
@@ -35,4 +35,3 @@ for p in "${upsert_paths[@]}"; do
   printf "  OPTIONS %-18s  %s\n" "$p" "$code"
 done
 echo "== Done =="
-

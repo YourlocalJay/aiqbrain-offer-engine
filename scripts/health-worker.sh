@@ -28,15 +28,17 @@ curl -fsS -X POST "${DOMAIN}/sync/offers/mylead" | jq .upserted >/dev/null 2>&1 
   && pass "domain POST /sync/offers/mylead OK" \
   || echo "ℹ️  domain POST /sync/offers/mylead not ready (missing token?)"
 
-# 4) /admin (domain)
-curl -fsSI "${DOMAIN}/admin" | grep -qi 'content-type: text/html' && pass "domain /admin serves HTML" || fail "domain /admin not HTML"
+# 4) /admin (domain) via GET header capture
+curl -fsS -o /dev/null -D - "${DOMAIN}/admin" | grep -qi 'content-type: text/html' \
+  && pass "domain /admin serves HTML (GET)" || fail "domain /admin not HTML"
 
 # 5) /console (domain)
-curl -fsSI "${DOMAIN}/console" | grep -qi 'content-type: text/html' && pass "domain /console serves HTML" || fail "domain /console not HTML"
+curl -fsS -o /dev/null -D - "${DOMAIN}/console" | grep -qi 'content-type: text/html' \
+  && pass "domain /console serves HTML (GET)" || fail "domain /console not HTML"
 
 # 6) /admintemp (domain)
-curl -fsSI "${DOMAIN}/admintemp" | grep -qi 'content-type: text/html' \
-  && pass "domain /admintemp serves HTML" \
+curl -fsS -o /dev/null -D - "${DOMAIN}/admintemp" | grep -qi 'content-type: text/html' \
+  && pass "domain /admintemp serves HTML (GET)" \
   || fail "domain /admintemp not HTML"
 
 # 7) /console (www optional check)
@@ -56,9 +58,9 @@ if [[ -n "${WBASE}" ]]; then
   curl -fsS "${WBASE}/health" | jq .ok >/dev/null 2>&1 && pass "workers.dev /health OK" || fail "workers.dev /health failed"
   curl -fsS "${WBASE}/api/offers?limit=1" | jq '.[0]' >/dev/null 2>&1 && pass "workers.dev /api/offers OK" || fail "workers.dev /api/offers failed"
   curl -fsS -X POST "${WBASE}/sync/offers/mylead" | jq .upserted >/dev/null 2>&1 && pass "workers.dev POST /sync/offers/mylead OK" || fail "workers.dev POST /sync failed"
-  curl -fsSI "${WBASE}/console" | grep -qi 'content-type: text/html' && pass "workers.dev /console HTML" || echo "ℹ️  workers.dev /console not HTML"
-  curl -fsSI "${WBASE}/api/admin/ui" | grep -qi 'content-type: text/html' && pass "workers.dev /api/admin/ui HTML" || echo "ℹ️  workers.dev /api/admin/ui not HTML"
-  curl -fsSI "${WBASE}/admin.txt" | grep -qi 'content-type: text/plain' && pass "workers.dev /admin.txt text/plain" || echo "ℹ️  workers.dev /admin.txt not text/plain"
+  curl -fsS -o /dev/null -D - "${WBASE}/console" | grep -qi 'content-type: text/html' && pass "workers.dev /console HTML" || echo "ℹ️  workers.dev /console not HTML"
+  curl -fsS -o /dev/null -D - "${WBASE}/api/admin/ui" | grep -qi 'content-type: text/html' && pass "workers.dev /api/admin/ui HTML" || echo "ℹ️  workers.dev /api/admin/ui not HTML"
+  curl -fsS -o /dev/null -D - "${WBASE}/admin.txt" | grep -qi 'content-type: text/plain' && pass "workers.dev /admin.txt text/plain" || echo "ℹ️  workers.dev /admin.txt not text/plain"
 fi
 
 echo "== OK =="
