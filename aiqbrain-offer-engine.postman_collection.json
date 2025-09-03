@@ -1,0 +1,186 @@
+{
+  "info": {
+    "name": "aiqbrain-offer-engine",
+    "_postman_id": "3e2f5d1e-ops-qa-collection",
+    "description": "Ops-ready probes for health, offers, admin UI aliases, CORS preflight, and upserts.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://aiqbrain.com" },
+    { "key": "workersBase", "value": "https://aiqbrain-offer-engine.<acct>.workers.dev" },
+    { "key": "ADMIN_TOKEN", "value": "" },
+    { "key": "BASIC_AUTH_USER", "value": "" },
+    { "key": "BASIC_AUTH_PASS", "value": "" },
+    { "key": "CF_Access_Client_Id", "value": "" },
+    { "key": "CF_Access_Client_Secret", "value": "" }
+  ],
+  "auth": { "type": "noauth" },
+  "item": [
+    {
+      "name": "Health (domain)",
+      "request": { "method": "GET", "url": "{{baseUrl}}/health" }
+    },
+    {
+      "name": "Offers (domain) ?limit=3",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/offers?limit=3"
+      }
+    },
+    {
+      "name": "Sync MyLead (domain) POST",
+      "request": { "method": "POST", "url": "{{baseUrl}}/sync/offers/mylead" }
+    },
+    {
+      "name": "Admin UI (console) — GET (domain)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/console",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{BASIC_AUTH_USER}}", "type": "string" },
+            { "key": "password", "value": "{{BASIC_AUTH_PASS}}", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Admin UI (admintemp) — GET (domain)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/admintemp",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{BASIC_AUTH_USER}}", "type": "string" },
+            { "key": "password", "value": "{{BASIC_AUTH_PASS}}", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Admin UI (xadmin) — GET (domain)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/xadmin",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{BASIC_AUTH_USER}}", "type": "string" },
+            { "key": "password", "value": "{{BASIC_AUTH_PASS}}", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Admin UI (API-shaped) — GET (domain)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/admin/ui",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{BASIC_AUTH_USER}}", "type": "string" },
+            { "key": "password", "value": "{{BASIC_AUTH_PASS}}", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Admin UI (plain) — GET /admin.txt (domain)",
+      "request": { "method": "GET", "url": "{{baseUrl}}/admin.txt" }
+    },
+    {
+      "name": "Upsert offer (console) — PUT (domain)",
+      "request": {
+        "method": "PUT",
+        "url": "{{baseUrl}}/console/offers",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{ADMIN_TOKEN}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"id\":\"demo1\",\"name\":\"Demo\",\"url\":\"https://example.com\",\"network\":\"Manual\",\"payout\":1.23}"
+        }
+      }
+    },
+    {
+      "name": "Preflight (console/offers) — OPTIONS (domain)",
+      "request": {
+        "method": "OPTIONS",
+        "url": "{{baseUrl}}/console/offers",
+        "header": [
+          { "key": "Origin", "value": "https://aiqbrain.com" },
+          { "key": "Access-Control-Request-Method", "value": "PUT" },
+          { "key": "Access-Control-Request-Headers", "value": "authorization, content-type" }
+        ]
+      }
+    },
+    {
+      "name": "Health (workers.dev)",
+      "request": { "method": "GET", "url": "{{workersBase}}/health" }
+    },
+    {
+      "name": "Admin UI (console) — GET (workers.dev)",
+      "request": {
+        "method": "GET",
+        "url": "{{workersBase}}/console",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{BASIC_AUTH_USER}}", "type": "string" },
+            { "key": "password", "value": "{{BASIC_AUTH_PASS}}", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Upsert offer (console) — PUT (workers.dev)",
+      "request": {
+        "method": "PUT",
+        "url": "{{workersBase}}/console/offers",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{ADMIN_TOKEN}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"id\":\"demo2\",\"name\":\"Workers Demo\",\"url\":\"https://example.com\",\"network\":\"Manual\",\"payout\":2.34}"
+        }
+      }
+    },
+    {
+      "name": "Preflight (console/offers) — OPTIONS (workers.dev)",
+      "request": {
+        "method": "OPTIONS",
+        "url": "{{workersBase}}/console/offers",
+        "header": [
+          { "key": "Origin", "value": "https://aiqbrain.com" },
+          { "key": "Access-Control-Request-Method", "value": "PUT" },
+          { "key": "Access-Control-Request-Headers", "value": "authorization, content-type" }
+        ]
+      }
+    },
+    {
+      "name": "Optional: CF Access headers (toggle here)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/console",
+        "header": [
+          { "key": "CF-Access-Client-Id", "value": "{{CF_Access_Client_Id}}", "disabled": true },
+          { "key": "CF-Access-Client-Secret", "value": "{{CF_Access_Client_Secret}}", "disabled": true }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{BASIC_AUTH_USER}}", "type": "string" },
+            { "key": "password", "value": "{{BASIC_AUTH_PASS}}", "type": "string" }
+          ]
+        }
+      }
+    }
+  ]
+}
+
