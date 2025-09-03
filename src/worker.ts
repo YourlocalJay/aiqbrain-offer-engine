@@ -2210,19 +2210,3 @@ document.getElementById('runBtn').addEventListener('click', (e)=>{ e.preventDefa
 function serveInspector(origin?: string){
   return new Response(INSPECTOR_HTML(''), { headers: { 'Content-Type': 'text/html; charset=utf-8', ...okCORS(origin) } });
 }
-    // ===== Debug helpers =====
-    if (req.method === "GET" && pathname === "/__router") {
-      const q = new URL(req.url);
-      const p = q.searchParams.get("path") || pathname;
-      return json({ matched: "debug", method: req.method, path: p }, originHdr);
-    }
-    if (req.method === "GET" && pathname === "/__version") {
-      let v = "0.0.0", n = "aiqbrain-offer-engine";
-      try {
-        // @ts-ignore: bundler may inline
-        const pkg = await import("../package.json");
-        v = (pkg as any)?.version || v;
-        n = (pkg as any)?.name || n;
-      } catch {}
-      return json({ name: n, version: v }, originHdr);
-    }
