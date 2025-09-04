@@ -1,0 +1,40 @@
+# Local dev variables for `wrangler dev`
+# Copy to `.dev.vars` and fill in values. Never commit real secrets.
+
+# Public toggles
+NETWORKS_ENABLED=ogads,cpagrip,mylead,maxbounty
+AIQ_API_KEYS=aiq_dev_test_key_001
+ADMIN_TOKEN=change_me_admin_token
+
+# CPAGrip (public vars)
+CPAGRIP_USER=YOUR_USER_ID
+CPAGRIP_PUBKEY=YOUR_PUBLIC_KEY
+# CPAGrip (secret for local dev)
+CPAGRIP_KEY=your_private_key
+CPAGRIP_OFFERS_TTL=900
+
+# MyLead (choose one: API key OR username/password login)
+MYLEAD_API_BASE=https://api.mylead.eu/api/external/v1/
+MYLEAD_OFFERS_PATH=
+MYLEAD_API_KEY=
+# OR
+MYLEAD_USERNAME=
+MYLEAD_PASSWORD=
+MYLEAD_TOKEN_TTL=10800
+
+# MaxBounty (email+password -> token)
+MAXBOUNTY_BASE=https://affiliates.maxbounty.com
+MAXBOUNTY_EMAIL=
+MAXBOUNTY_PASSWORD=
+MAXBOUNTY_TOKEN_TTL=6000
+MAXBOUNTY_OFFERS_PATH=/offers
+
+# OGAds (UnlockContent)
+OGADS_API_KEY=
+OGADS_BASE=https://unlockcontent.net/api/v2
+OGADS_OFFERS_PATH=/offers
+
+# Optional
+BASE_URL=
+WEBHOOK_URL=
+BASIC_AUTH=
