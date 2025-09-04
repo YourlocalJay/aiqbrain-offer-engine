@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="grad7" x1="256" y1="64" x2="256" y2="448" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00C853"/>
+      <stop offset="100%" stop-color="#0063F7"/>
+    </linearGradient>
+  </defs>
+  <!-- Clear space: 12.5% padding (64px) around the mark -->
+  <!-- 7 mark: strong top bar + diagonal, rounded caps/joins -->
+  <path d="M96 144 H416 L224 416" stroke="url(#grad7)" stroke-width="96" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+

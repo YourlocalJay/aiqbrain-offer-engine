@@ -1890,28 +1890,95 @@ if (split) {
 
 // ===== Vault UI implementation =====
 const VAULT_HTML = (body: string) => `<!doctype html>
-<html lang="en"><meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Offer Vault</title>
-<style>
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:24px}
-  input,select{padding:6px 8px;margin:4px}
-  table{border-collapse:collapse;width:100%;margin-top:16px}
-  th,td{border:1px solid #ddd;padding:8px;font-size:14px}
-  th{background:#f5f5f5;text-align:left}
-  .wrap{max-width:1100px;margin:0 auto}
-  .muted{color:#666}
-  .hint{font-size:12px;color:#666;margin-left:8px}
-  .btn{padding:6px 10px;margin:8px 0;cursor:pointer}
-</style>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Offer Vault</title>
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Poppins:wght@700&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --color-bg: #ffffff;
+      --color-text: #0f172a;
+      --color-border: #E2E8F0;
+      --card-bg: #F8FAFC; /* Titanium */
+      --btn-grad-start: #00C853; /* Sovereign Green */
+      --btn-grad-end: #0063F7;   /* Sovereign Blue */
+    }
+    :root[data-theme="dark"]{
+      --color-bg: #2C3E50; /* Graphite */
+      --color-text: #E2E8F0; /* Dark text */
+      --color-border: #334155; /* Dark border */
+      --card-bg: #2C3E50; /* Cards flip to Graphite */
+    }
+    html,body{height:100%}
+    body{
+      margin:24px;
+      font-family:'Inter', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--color-bg);
+      color: var(--color-text);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    h1,h2,h3{ font-family:'Poppins', sans-serif; font-weight:700; margin:0 0 12px }
+    .wrap{max-width:1100px;margin:0 auto}
+    .head{ display:flex; align-items:center; gap:12px; margin-bottom:12px }
+    .spacer{ flex:1 }
+    .muted{ color: rgba(100,116,139,.9) }
+    .hint{ font-size:12px; color: rgba(100,116,139,.9); margin-left:8px }
+
+    /* Controls (card) */
+    form.card{ background: var(--card-bg); border:1px solid var(--color-border); border-radius:12px; padding:12px; box-shadow:0 4px 12px rgba(0,0,0,.06) }
+    label{ font-weight:600; margin:0 8px 0 0 }
+    input,select{ padding:8px 10px; margin:4px; border:1px solid var(--color-border); border-radius:8px; background: #fff; color: inherit }
+    :root[data-theme="dark"] input,:root[data-theme="dark"] select{ background:#1f2937; border-color: var(--color-border); color: var(--color-text) }
+
+    /* Buttons with Sovereign gradient */
+    .btn{ padding:8px 12px; margin:8px 0; cursor:pointer; border:none; border-radius:10px; color:#fff;
+      background: linear-gradient(180deg, var(--btn-grad-start), var(--btn-grad-end));
+      box-shadow: 0 3px 10px rgba(0,99,247,.25);
+    }
+    .btn:hover{ filter: brightness(1.05) }
+
+    /* Tables as cards */
+    table{ border-collapse: collapse; width:100%; margin-top:16px; background: var(--card-bg); border-radius:12px; overflow:hidden; box-shadow:0 4px 12px rgba(0,0,0,.06); border:1px solid var(--color-border) }
+    th,td{ padding:10px 12px; font-size:14px; border-bottom:1px solid var(--color-border) }
+    th{ text-align:left; background: rgba(148,163,184,.12); color: inherit }
+    tr:last-child td{ border-bottom:none }
+
+    .links a{ color: inherit; text-decoration: underline; text-underline-offset: 2px }
+    .toggle{ display:inline-flex; align-items:center; gap:6px; font-size:13px }
+    .toggle input{ width:36px; height:20px }
+  </style>
+  <script>
+    (function(){
+      const pref = localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      if(pref==='dark') document.documentElement.setAttribute('data-theme','dark');
+      window.__setTheme = function(mode){
+        if(mode==='dark') document.documentElement.setAttribute('data-theme','dark');
+        else document.documentElement.removeAttribute('data-theme');
+        localStorage.setItem('theme', mode);
+      }
+    })();
+  </script>
+</head>
+<body>
 <div class="wrap">
-<h1>Offer Vault</h1>
-<form action="/vault/search" method="get">
-  <div>
-    <label>Geo (CSV)</label>
-    <input name="geo" placeholder="US,CA,UK,AU,DE,FR" />
-    <label>Device (CSV)</label>
-    <input name="device" placeholder="mobile,desktop" />
+  <div class="head">
+    <h1>Offer Vault</h1>
+    <div class="spacer"></div>
+    <div class="toggle">
+      <label for="themeToggle">Dark mode</label>
+      <input id="themeToggle" type="checkbox" aria-label="Toggle dark mode"/>
+    </div>
+  </div>
+  <form class="card" action="/vault/search" method="get">
+    <div>
+      <label>Geo (CSV)</label>
+      <input name="geo" placeholder="US,CA,UK,AU,DE,FR" />
+      <label>Device (CSV)</label>
+      <input name="device" placeholder="mobile,desktop" />
     <label>Type (CSV or *)</label>
     <input name="ctype" placeholder="CPA,CPI,SOI,DOI,Trial,Deposit" />
   </div>
@@ -1932,12 +1999,12 @@ const VAULT_HTML = (body: string) => `<!doctype html>
     <label>Friction max</label>
     <input name="friction_max" type="number" min="1" max="30" value="7" />
  </div>
- <div>
-    <button type="submit">Search</button>
-    <span class="muted">Public view — no API key required</span>
-  </div>
- </form>
- ${body}
+    <div>
+      <button class="btn" type="submit">Search</button>
+      <span class="muted">Public view — no API key required</span>
+    </div>
+  </form>
+  ${body}
 </div>
 <script>
 // Enhance tables: click-to-sort and simple \"Show all\" for long lists
@@ -1984,9 +2051,12 @@ function sortTable(table,col,type){
 }
 document.addEventListener('DOMContentLoaded',()=>{
   document.querySelectorAll('table.sortable').forEach(t=>setupTable(t));
+  const tgl = document.getElementById('themeToggle');
+  const isDark = document.documentElement.getAttribute('data-theme')==='dark';
+  if(tgl){ tgl.checked = isDark; tgl.addEventListener('change',()=>window.__setTheme(tgl.checked?'dark':'light')); }
 });
 </script>
-</html>`;
+</body></html>`;
 
 function serveVault(origin?: string) {
   const body = `<p class="muted">Enter filters and submit to view offers. Use split to see GREEN (faster, matched traffic) vs YELLOW.</p>`;
