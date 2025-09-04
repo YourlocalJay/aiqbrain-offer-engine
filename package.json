@@ -7,7 +7,11 @@
     "check:worker": "bash scripts/health-worker.sh",
     "check:admin": "bash scripts/smoke-admin.sh https://aiqbrain.com",
     "smoke": "./smoke.sh",
-    "health:adv": "./scripts/health-adv.sh"
+    "smoke:worker:site": "bash scripts/smoke-worker-for-site.sh",
+    "health:adv": "./scripts/health-adv.sh",
+    "qa:full": "bash scripts/full-qa.sh",
+    "qa:report": "node scripts/make-qa-report.mjs",
+    "qa": "bash scripts/full-qa.sh && node scripts/make-qa-report.mjs && echo 'Report: docs/qa-report.md'"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250826.0",

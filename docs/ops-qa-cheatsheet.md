@@ -98,3 +98,14 @@ Enable network:
 
 Manual sync:
 - POST `/sync/offers/cpagrip` (Authorization: Bearer `<ADMIN_TOKEN>`)
+
+## Site Integration
+
+- API_BASE: the Worker base URL your site should call (e.g., set `API_BASE` to `$WBASE`).
+- Example:
+
+```bash
+curl -i "$WBASE/api/offers?limit=5" -H 'Accept: application/json'
+```
+
+- CORS: `/api/offers` responds with `Access-Control-Allow-Origin: *`, supports `GET, HEAD, OPTIONS`, and includes `Vary: Accept-Encoding`.

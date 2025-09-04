@@ -756,13 +756,15 @@ function splitOffers(
 }
 
 function okCORS(origin?: string) {
-  // allow Actions + quick testing
-  const allow = origin ?? "*";
+  // For public APIs, prefer wildcard to simplify site integration.
+  const allow = "*";
   return {
     "Access-Control-Allow-Origin": allow,
     "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, X-Api-Key, Authorization, Accept",
     "Access-Control-Max-Age": "86400",
+    // Ensure proxies/CDN negotiate compression separately
+    "Vary": "Accept-Encoding",
   };
 }
 
@@ -1413,10 +1415,14 @@ export default {
     }
 
     // Public offers API (KV with fallback to seeds)
-    if (req.method === "GET" && pathname === "/api/offers") {
+    if ((req.method === "HEAD" || req.method === "GET") && pathname === "/api/offers") {
       const url = new URL(req.url);
       const limit = Math.max(1, Math.min(1000, Number(url.searchParams.get("limit") || 100)));
       const all = await getAllOffers(env);
+      if (req.method === "HEAD") {
+        // Acknowledge with same headers (including CORS + Vary), empty body
+        return new Response(null, { status: 200, headers: { ...okCORS(originHdr), "Content-Type": "application/json; charset=utf-8" } });
+      }
       return json(all.slice(0, limit), originHdr);
     }
 
