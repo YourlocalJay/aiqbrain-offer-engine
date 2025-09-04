@@ -42,7 +42,12 @@ export interface Env {
   GREEN_MAX_MINUTES?: string;
   FALLBACK_GENERIC?: string;
   MYLEAD_TOKEN_TTL?: string; // seconds to cache login token in KV (default ~3h)
-  // CPAGrip private feed
+  // CPAGrip (new vars)
+  CPAGRIP_USER?: string;          // public user id
+  CPAGRIP_PUBKEY?: string;        // public pubkey
+  CPAGRIP_KEY?: string;           // SECRET: private API key (wrangler secret)
+  CPAGRIP_OFFERS_TTL?: string;    // seconds (default 900)
+  // CPAGrip (legacy/back-compat; may be removed later)
   CPAGRIP_USER_ID?: string;
   CPAGRIP_SECRET_KEY?: string;
   CPAGRIP_PUBLISHER_ID?: string;
@@ -210,6 +215,23 @@ async function kvPutJSON(ns: KVNamespace | undefined, key: string, value: any, t
   } catch {}
 }
 
+// Redact helper for env introspection/logging
+const redactEnv = (k: string, v: unknown) =>
+  /TOKEN|KEY|SECRET|PASS|AUTH|CPAGRIP_KEY/i.test(k) ? "[redacted]" : v;
+
+// Build CPAGrip URL with public params; secret is injected at fetch-time only
+export function buildCpagripUrl(env: Env, params: Record<string, string | number> = {}) {
+  const base = "https://www.cpagrip.com/common/offer_feed_json.php";
+  const q = new URLSearchParams();
+  const user = env.CPAGRIP_USER || env.CPAGRIP_USER_ID || "";
+  const pub = env.CPAGRIP_PUBKEY || env.CPAGRIP_PUBLISHER_ID || "";
+  if (user) q.set("user_id", String(user));
+  if (pub) q.set("pubkey", String(pub));
+  if (env.CPAGRIP_KEY || env.CPAGRIP_SECRET_KEY) q.set("key", "REDACTED_DURING_LOG");
+  for (const [k, v] of Object.entries(params)) q.set(k, String(v));
+  return `${base}?${q.toString()}`;
+}
+
 type AdapterParams = { geos: string[]; devices: string[]; ctypes: string[]; max: number };
 
 async function maxbountyOffers(params: AdapterParams, env?: Env): Promise<Offer[]> {
@@ -300,81 +322,41 @@ async function myleadOffers(params: AdapterParams, env?: Env, options?: { force?
   }
 }
 
-async function cpagripOffers(params: AdapterParams, env?: Env): Promise<Offer[]> {
-  const cacheKey = 'offers:cpagrip';
-  const cached = await kvGetJSON<Offer[]>(env?.REGISTRY, cacheKey);
-  if (Array.isArray(cached) && cached.length) return cached.slice(0, params.max);
-  if (!env?.CPAGRIP_USER_ID || !env?.CPAGRIP_SECRET_KEY) return [];
-  const base = (env.CPAGRIP_BASE || 'https://www.cpagrip.com/common/offer_feed_json.php');
-  const u = new URL(base);
-  u.searchParams.set('user_id', env.CPAGRIP_USER_ID);
-  u.searchParams.set('key', env.CPAGRIP_SECRET_KEY);
-  if (!u.searchParams.has('format')) u.searchParams.set('format', 'json');
-  try {
-    const res = await fetch(u.toString(), { headers: { Accept: 'application/json' } });
-    if (!res.ok) return [];
-    const data: any = await res.json().catch(() => ({}));
-    const arr: any[] = Array.isArray(data)
-      ? data
-      : Array.isArray(data.offers)
-        ? data.offers
-        : Array.isArray(data.data)
-          ? data.data
-          : [];
-    const normalized = arr.map((raw: any) => {
-      const o: any = { ...raw };
-      if (!o.url) o.url = raw.offerlink || raw.tracking_url || raw.url || '';
-      if (typeof o.payout !== 'number') {
-        const n = Number(raw.payout ?? raw.rate);
-        if (!Number.isNaN(n)) o.payout = n;
-      }
-      // Geo normalization and inference
-      const geoFrom = (): string[] => {
-        const vals: string[] = [];
-        const pushVals = (v: any) => {
-          if (!v) return;
-          if (Array.isArray(v)) v.forEach(x => pushVals(x));
-          else String(v).split(',').forEach(x => { const t = x.trim(); if (t) vals.push(t); });
-        };
-        pushVals(raw.countries);
-        pushVals(raw.country);
-        pushVals(raw.country_code);
-        pushVals(raw.country_iso);
-        pushVals(raw.countryIso);
-        pushVals(raw.geo);
-        const upper = vals.map(s => s.toUpperCase().replace(/[^A-Z]/g, ''))
-                          .filter(Boolean);
-        // Infer from name if still empty
-        if (upper.length === 0) {
-          const nameStr = String(raw.name || raw.offer_name || raw.title || '')
-            .toUpperCase();
-          const known = ["US","CA","UK","AU","DE","FR","IE","NZ","ES","IT","NL","SE","NO","DK"];
-          for (const k of known) {
-            if (new RegExp(`(^|[^A-Z])${k}([^A-Z]|$)`).test(nameStr)) upper.push(k);
-          }
-        }
-        // de-dup
-        return Array.from(new Set(upper));
-      };
-      if (!Array.isArray(o.geo) || o.geo.length === 0) {
-        const g = geoFrom();
-        if (g.length) o.geo = g;
-      }
-      if (!Array.isArray(o.device) && raw.devices) {
-        o.device = Array.isArray(raw.devices) ? raw.devices : [String(raw.devices)];
-      }
-      if (!Array.isArray(o.allowed_traffic) && raw.allowed_traffic_sources) {
-        o.allowed_traffic = Array.isArray(raw.allowed_traffic_sources) ? raw.allowed_traffic_sources : [String(raw.allowed_traffic_sources)];
-      }
-      if (!o.vertical) o.vertical = raw.category || raw.vertical || null;
-      return NormalizeNet('CPAGrip')(o);
-    }).filter((o: Offer) => o.url);
-    const ttl = Number(env?.OFFERS_CACHE_TTL || 900);
-    await kvPutJSON(env?.REGISTRY, cacheKey, normalized, ttl);
-    return normalized.slice(0, params.max);
-  } catch {
-    return [];
+async function cpagripOffers(env: Env, kv: KVNamespace | undefined, { country = "US", limit = 50 } = {}) {
+  const ttl = Number(env.CPAGRIP_OFFERS_TTL || 900);
+  const cacheKey = `cpagrip:${country}:${limit}`;
+  if (kv) {
+    const hit = await kv.get(cacheKey, "json" as any);
+    if (hit) return hit as any[];
   }
+  // Build URL; insert real secret only at fetch time
+  let url = buildCpagripUrl(env, { limit, country });
+  const secret = env.CPAGRIP_KEY || env.CPAGRIP_SECRET_KEY;
+  if (secret) {
+    url = url.replace("REDACTED_DURING_LOG", encodeURIComponent(secret));
+  }
+  const res = await fetch(url, { headers: { "Accept": "application/json" } });
+  if (!res.ok) throw new Error(`CPAGrip fetch failed: ${res.status}`);
+  const data = await res.json().catch(() => ([])) as any;
+
+  // Normalize minimal fields used by engine
+  const out = (Array.isArray(data) ? data : []).map((o: any) => ({
+    id: `cpagrip_${(o.offer_id ?? o.id ?? Math.random()).toString()}`,
+    name: o.title ?? o.name ?? "CPAGrip Offer",
+    url: o.offerlink ?? o.offer_link ?? o.url,
+    network: "CPAGrip",
+    payout: Number(o.payout ?? o.rate ?? 0) || null,
+    epc: o.epc ? Number(o.epc) : null,
+    geo: (o.country ?? o.countries ?? "").toString().split(",").map((s: string) => s.trim()).filter(Boolean) || ["US"],
+    device: /mobile/i.test(o.device ?? o.devices ?? "") ? ["mobile"] : ["mobile","desktop"],
+    vertical: (o.category ?? o.vertical ?? "sweeps").toString().toLowerCase(),
+    allowed_traffic: Array.isArray(o.allowed_traffic) ? o.allowed_traffic : ["Reddit","TikTok","Pinterest"],
+    friction_minutes: 5,
+    notes: "From CPAGrip feed",
+  }));
+
+  if (kv) await kv.put(cacheKey, JSON.stringify(out), { expirationTtl: ttl } as any);
+  return out;
 }
 
 async function ogadsOffers(params: AdapterParams, env?: Env, ctx?: { req?: Request; url?: URL }): Promise<Offer[]> {
@@ -873,7 +855,8 @@ async function handleSearch(url: URL, env?: Env, req?: Request): Promise<Offer[]
       external = external.concat(og);
     }
     if (enabled.has("cpagrip")) {
-      const cg = await cpagripOffers({ geos: reqGeos, devices: reqDevices, ctypes: reqCtypes, max }, env);
+      const country = (url.searchParams.get("geo") || "US").split(",")[0].trim() || "US";
+      const cg = await cpagripOffers(env as Env, env?.REGISTRY, { country, limit: max });
       external = external.concat(cg);
     }
     if (enabled.has("maxbounty")) {
@@ -1374,6 +1357,7 @@ export default {
         "/health",
         "/api/offers",
         "/sync/offers/mylead",
+        "/sync/offers/cpagrip",
         "/postback",
         "/admin",
         "/admin/offers",
@@ -1443,6 +1427,19 @@ export default {
       const { fetched, items } = await fetchMylead(token, env).catch(() => ({ fetched: 0, items: [] as Partial<Offer>[] }));
       const upserted = (await upsertOffers(env, items)).length;
       return json({ fetched, upserted }, originHdr);
+    }
+
+    // Sync from CPAGrip using env CPAGRIP_* (admin Bearer auth)
+    if (req.method === "POST" && pathname === "/sync/offers/cpagrip") {
+      const auth = req.headers.get("authorization") || "";
+      const token = auth.replace(/^Bearer\s+/i, "");
+      if (!env.ADMIN_TOKEN || token !== env.ADMIN_TOKEN) {
+        return json({ fetched: 0, upserted: 0, message: "unauthorized" }, originHdr, 401);
+      }
+      const list = await cpagripOffers(env, undefined, { country: "US", limit: 200 }).catch(() => [] as any[]);
+      const { length: fetched } = list as any[];
+      const upserted = (await upsertOffers(env, list as any)).length;
+      return json({ fetched, upserted, message: "ok" }, originHdr);
     }
 
     // Postback handler with optional Discord webhook
@@ -1617,9 +1614,8 @@ export default {
       if (req.method === "POST" && pathname === "/offers/admin/refresh/cpagrip") {
         const url = new URL(req.url);
         const max = Math.min(200, Number(url.searchParams.get("max") || 100));
-        const params = { geos: [], devices: [], ctypes: [], max };
         try { await env.REGISTRY?.delete?.('offers:cpagrip'); } catch {}
-        ctx.waitUntil(cpagripOffers(params, env).then(() => undefined));
+        ctx.waitUntil(cpagripOffers(env, env.REGISTRY, { country: 'US', limit: max }).then(() => undefined));
         return new Response(JSON.stringify({ status: "accepted", action: "refresh_cpagrip", max }), {
           status: 202,
           headers: { "Content-Type": "application/json", ...okCORS(originHdr) }
@@ -1645,7 +1641,7 @@ export default {
         const max = Math.min(200, Number(new URL(req.url).searchParams.get("max") || 50));
         const params = { geos: [], devices: [], ctypes: [], max } as AdapterParams;
         let items: Offer[] = [];
-        if (net === 'cpagrip') items = await cpagripOffers(params, env);
+        if (net === 'cpagrip') items = await cpagripOffers(env, env.REGISTRY, { country: 'US', limit: max }) as any;
         else if (net === 'ogads') items = await ogadsOffers(params, env, { req, url: new URL(req.url) });
         else if (net === 'mylead') items = await myleadOffers(params, env, { force: true });
         else if (net === 'maxbounty') items = await maxbountyOffers(params, env);

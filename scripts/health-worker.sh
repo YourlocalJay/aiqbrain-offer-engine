@@ -61,6 +61,11 @@ if [[ -n "${WBASE}" ]]; then
   curl -fsS -o /dev/null -D - "${WBASE}/console" | grep -qi 'content-type: text/html' && pass "workers.dev /console HTML" || echo "ℹ️  workers.dev /console not HTML"
   curl -fsS -o /dev/null -D - "${WBASE}/api/admin/ui" | grep -qi 'content-type: text/html' && pass "workers.dev /api/admin/ui HTML" || echo "ℹ️  workers.dev /api/admin/ui not HTML"
   curl -fsS -o /dev/null -D - "${WBASE}/admin.txt" | grep -qi 'content-type: text/plain' && pass "workers.dev /admin.txt text/plain" || echo "ℹ️  workers.dev /admin.txt not text/plain"
+
+  # workers.dev CPAGrip sync (informational)
+  curl -fsS -X POST "${WBASE}/sync/offers/cpagrip" -H "Authorization: Bearer ${ADMIN_TOKEN:-}" \
+    | jq .upserted >/dev/null 2>&1 && pass "workers.dev POST /sync/offers/cpagrip OK" \
+    || echo "ℹ️  workers.dev /sync/offers/cpagrip not available"
 fi
 
 echo "== OK =="

@@ -37,6 +37,11 @@ MYLEAD_API_TOKEN = ""
 ADMIN_TOKEN = ""
 WEBHOOK_URL = ""
 
+# CPAGrip (non-secret, safe to include in [vars])
+CPAGRIP_USER = "YOUR_USER_ID"         # from CPAGrip feed page (numeric)
+CPAGRIP_PUBKEY = "YOUR_PUBLIC_KEY"    # safe to ship to client/worker
+CPAGRIP_OFFERS_TTL = "900"            # seconds (optional; default 15m)
+
 # KV namespaces (IDs from
 #   npx wrangler kv namespace create REGISTRY
 #   npx wrangler kv namespace create LOGS
@@ -50,13 +55,8 @@ binding = "LOGS"
 id = "7c3eb5b4694b46eb88099c6cc443d915"
 
 # Secrets (set these via Wrangler, not here):
-#   # CPAGrip (server-to-server, preferred)
-#   #   &key= uses your private API key for the private JSON feed.
-#   npx wrangler secret put CPAGRIP_SECRET_KEY
-#
-#   # CPAGrip (client-side JSON feed, optional — only if you plan to expose it)
-#   #   &pubkey= uses your *publisher id* (public), not the secret key.
-#   npx wrangler secret put CPAGRIP_PUBLISHER_ID
+#   # CPAGrip private API key (SECRET — do not place in [vars])
+#   wrangler secret put CPAGRIP_KEY
 #
 #   # OGAds (optional, only if "ogads" is enabled in NETWORKS_ENABLED)
 #   npx wrangler secret put OGADS_API_KEY

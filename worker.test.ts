@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import worker from './src/worker';
+import worker, { buildCpagripUrl } from './src/worker';
 
 // Minimal KV stub
 class KV {
@@ -27,5 +27,18 @@ describe('worker endpoints', () => {
     expect(res.headers.get('content-type') || '').toMatch(/text\/html/);
     const text = await res.text();
     expect(text).toContain('Manual Offer Entry');
+  });
+});
+
+describe("cpagrip url & redaction", () => {
+  const fakeEnv: any = { CPAGRIP_USER: "123", CPAGRIP_PUBKEY: "pub", CPAGRIP_KEY: "priv" };
+
+  it("includes key in fetch URL but is redacted for logs", () => {
+    const base = buildCpagripUrl(fakeEnv, { limit: 5, country: "US" });
+    expect(base).toContain("user_id=123");
+    expect(base).toContain("pubkey=pub");
+    expect(base).toContain("key=REDACTED_DURING_LOG");
+    const withSecret = base.replace("REDACTED_DURING_LOG", encodeURIComponent(fakeEnv.CPAGRIP_KEY));
+    expect(withSecret).toContain("key=priv");
   });
 });

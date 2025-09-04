@@ -83,3 +83,18 @@ curl -sS "$WBASE/debug/headers" | jq .
 - /health lists all public and admin upsert routes for quick visibility.
 - Optional Zero Trust: add CF-Access-Client-Id/Secret headers to admin GETs if protected.
 
+## CPAGrip Configuration
+
+wrangler.toml [vars]
+- CPAGRIP_USER (public, numeric)
+- CPAGRIP_PUBKEY (public)
+- CPAGRIP_OFFERS_TTL (optional, seconds)
+
+Secrets
+- CPAGRIP_KEY (private) -> `wrangler secret put CPAGRIP_KEY`
+
+Enable network:
+- Add "CPAGRIP" to `NETWORKS_ENABLED` (comma sep) or set env.
+
+Manual sync:
+- POST `/sync/offers/cpagrip` (Authorization: Bearer `<ADMIN_TOKEN>`)
